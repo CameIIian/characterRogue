@@ -156,6 +156,51 @@ class GameTests(unittest.TestCase):
         self.assertGreater(counts["Rare"], counts["Epic"])
         self.assertGreater(counts["Epic"], counts["Legendary"])
 
+    def test_floor_five_has_miniboss(self):
+        g = Game(seed=1)
+        g.floor = 5
+        g.generate_floor()
+
+        minibosses = [enemy for enemy in g.enemies if enemy.kind == "miniboss"]
+        self.assertEqual(len(minibosses), 1)
+
+    def test_stairs_locked_while_miniboss_is_alive(self):
+        g = Game(seed=1)
+        g.floor = 5
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.stairs = (3, 2)
+        g.enemies = [Entity(1, 2, hp=10, atk=1, defense=0, kind="miniboss")]
+        g.items = []
+
+        g.move_player(1, 0)
+
+        self.assertEqual(g.floor, 5)
+        self.assertEqual((g.player.x, g.player.y), (3, 2))
+        self.assertIn("Defeat the miniboss first", "\n".join(g.message_log))
+
+    def test_miniboss_defeat_drops_high_rarity_item(self):
+        g = Game(seed=1)
+        g.floor = 5
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 20
+        miniboss = Entity(3, 2, hp=1, atk=1, defense=0, kind="miniboss")
+        g.enemies = [miniboss]
+        g.items = []
+
+        g.move_player(1, 0)
+
+        self.assertEqual(len(g.enemies), 0)
+        self.assertEqual(len(g.items), 1)
+        self.assertIn(g.items[0].rarity, {"Rare", "Epic", "Legendary"})
+
 
 if __name__ == "__main__":
     unittest.main()

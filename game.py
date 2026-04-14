@@ -21,6 +21,7 @@ class Entity:
     hp: int
     atk: int
     defense: int
+    kind: str = "normal"
 
 
 @dataclass
@@ -152,7 +153,29 @@ class Game:
         enemy_count = min(2 + self.floor, 8)
         for _ in range(enemy_count):
             ex, ey = self.random_empty_tile()
-            self.enemies.append(Entity(ex, ey, hp=3 + self.floor, atk=2 + self.floor // 2, defense=0 + self.floor // 3))
+            self.enemies.append(
+                Entity(
+                    ex,
+                    ey,
+                    hp=3 + self.floor,
+                    atk=2 + self.floor // 2,
+                    defense=self.floor // 3,
+                )
+            )
+
+        if self.floor == 5:
+            bx, by = self.random_empty_tile()
+            self.enemies.append(
+                Entity(
+                    bx,
+                    by,
+                    hp=14,
+                    atk=6,
+                    defense=3,
+                    kind="miniboss",
+                )
+            )
+            self.log("A miniboss lurks on this floor. Defeat it to unlock the stairs.")
 
         item_pool = ["Potion", "Power", "Shield", "Ether"]
         item_count = min(1 + self.floor // 2, 4)
@@ -217,6 +240,20 @@ class Game:
             if it.x == x and it.y == y:
                 return it
         return None
+
+    def miniboss_alive(self) -> bool:
+        return any(enemy.kind == "miniboss" for enemy in self.enemies)
+
+    def roll_high_rarity(self) -> str:
+        high_tiers = [("Rare", 45), ("Epic", 35), ("Legendary", 20)]
+        total_weight = sum(weight for _, weight in high_tiers)
+        pick = self.rng.randint(1, total_weight)
+        cumulative = 0
+        for rarity, weight in high_tiers:
+            cumulative += weight
+            if pick <= cumulative:
+                return rarity
+        return "Rare"
 
     @staticmethod
     def damage(attacker_atk: int, defender_def: int) -> int:
@@ -361,6 +398,9 @@ class Game:
         self.pickup_item()
 
         if (nx, ny) == self.stairs:
+            if self.floor == 5 and self.miniboss_alive():
+                self.log("A mysterious seal blocks the stairs. Defeat the miniboss first.")
+                return
             self.advance_floor()
 
     def combat(self, enemy: Entity) -> None:
@@ -369,9 +409,17 @@ class Game:
         self.log(f"You hit the enemy for {dmg} damage.")
 
         if enemy.hp <= 0:
+            defeat_x, defeat_y = enemy.x, enemy.y
             self.enemies.remove(enemy)
-            self.log("Enemy defeated.")
-            xp_gain = 3 + self.floor
+            if enemy.kind == "miniboss":
+                self.log("Miniboss defeated! The stairs are now unsealed.")
+                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether"])
+                self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, self.roll_high_rarity()))
+                self.log("A treasure chest drops a high-rarity item.")
+                xp_gain = 12 + self.floor
+            else:
+                self.log("Enemy defeated.")
+                xp_gain = 3 + self.floor
             self.gain_xp(xp_gain)
             return
 
