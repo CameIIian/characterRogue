@@ -10,6 +10,8 @@ WALL = "#"
 FLOOR = "."
 PLAYER = "@"
 ENEMY = "E"
+MINIBOSS = "M"
+BOSS = "B"
 ITEM = "I"
 STAIRS = ">"
 
@@ -32,6 +34,12 @@ class ItemEntity:
     rarity: str
 
 
+@dataclass
+class Spell:
+    name: str
+    rarity: str
+
+
 class Game:
     def __init__(self, width: int = 10, height: int = 10, seed: Optional[int] = None):
         self.width = width
@@ -51,6 +59,8 @@ class Game:
         self.xp = 0
         self.next_level_xp = 10
         self.skill_points = 0
+        self.spells: List[Spell] = []
+        self.pending_chant_spell: Optional[Spell] = None
 
         self.skill_tree = {
             "vitality": 0,
@@ -81,11 +91,11 @@ class Game:
     @staticmethod
     def help_lines() -> List[str]:
         return [
-            "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item,", 
-            "Attack Commands: f=attack, t=technique,k=skill,",
-            "Skill command: k, then choose v=str HP, s=str ATK, g=str DEF, a=arcane tech",
-            "System Commands: h=help, q=quit"
-            "Icons: #=wall, .=floor, @=you, E=enemy, I=item, >=stairs",
+            "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item,",
+            "Attack Commands: f=attack, t=magic, k=skill,",
+            "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
+            "System Commands: h=help, q=quit",
+            "Icons: #=wall, .=floor, @=you, E=enemy, M=miniboss, B=boss, I=item, >=stairs",
         ]
 
     def log(self, msg: str) -> None:
@@ -220,7 +230,12 @@ class Game:
         for i in self.items:
             temp[i.y][i.x] = ITEM
         for e in self.enemies:
-            temp[e.y][e.x] = ENEMY
+            if e.kind == "miniboss":
+                temp[e.y][e.x] = MINIBOSS
+            elif e.kind == "boss":
+                temp[e.y][e.x] = BOSS
+            else:
+                temp[e.y][e.x] = ENEMY
         temp[self.player.y][self.player.x] = PLAYER
 
         return "\n".join("".join(row) for row in temp)
@@ -333,14 +348,14 @@ class Game:
         for _ in range(high - low):
             if self.rng.random() < chance:
                 gain += 1
-        return max(1, gain)
+        return max(0, gain)
 
     def level_up(self) -> None:
         self.level += 1
-        hp_gain = self._stat_growth(1, 3)
-        mp_gain = self._stat_growth(1, 2)
-        atk_gain = self._stat_growth(1, 2)
-        def_gain = self._stat_growth(1, 2)
+        hp_gain = self._stat_growth(1, 2)
+        mp_gain = self._stat_growth(0, 1)
+        atk_gain = self._stat_growth(0, 1)
+        def_gain = self._stat_growth(0, 1)
 
         self.player_max_hp += hp_gain
         self.player_max_mp += mp_gain
@@ -363,20 +378,22 @@ class Game:
 
         if skill == "v":
             self.skill_tree["vitality"] += 1
-            self.player_max_hp += 2
+            self.player_max_hp += 3
             self.player.hp = self.player_max_hp
-            self.log("Vitality upgraded: Max HP +2.")
+            self.log("Vitality upgraded: Max HP +3.")
         elif skill == "s":
             self.skill_tree["strength"] += 1
-            self.player.atk += 1
-            self.log("Strength upgraded: ATK +1.")
+            self.player.atk += 2
+            self.log("Strength upgraded: ATK +2.")
         elif skill == "g":
             self.skill_tree["guard"] += 1
-            self.player.defense += 1
-            self.log("Guard upgraded: DEF +1.")
+            self.player.defense += 2
+            self.log("Guard upgraded: DEF +2.")
         elif skill == "a":
             self.skill_tree["arcane"] += 1
-            self.log("Arcane upgraded: Technique damage increased.")
+            spell = Spell(self.rng.choice(["Comet Missile", "Flare Curtain", "God's Wrath"]), self.roll_item_rarity())
+            self.spells.append(spell)
+            self.log(f"Arcane upgraded: Learned {spell.rarity} {spell.name}.")
         else:
             self.log("Unknown skill.")
             return False
@@ -457,32 +474,149 @@ class Game:
         self.player.hp -= retaliation
         self.log(f"Enemy hits you for {retaliation} damage.")
 
+    def spell_power_multiplier(self, rarity: str) -> float:
+        return {
+            "Common": 1.00,
+            "Uncommon": 1.12,
+            "Rare": 1.25,
+            "Epic": 1.42,
+            "Legendary": 1.65,
+        }.get(rarity, 1.0)
+
+    def spell_mp_bonus(self, rarity: str) -> int:
+        return {
+            "Common": 0,
+            "Uncommon": 0,
+            "Rare": 1,
+            "Epic": 1,
+            "Legendary": 2,
+        }.get(rarity, 0)
+
+    def choose_spell(self) -> Optional[Spell]:
+        if not self.spells:
+            return None
+        if len(self.spells) == 1:
+            return self.spells[0]
+        self.log("Spellbook:")
+        for idx, spell in enumerate(self.spells, start=1):
+            self.log(f"{idx}: {spell.rarity} {spell.name}")
+        choice = input("Cast which spell [number, other=cancel]: ").strip()
+        if not choice.isdigit():
+            self.log("Spell cast cancelled.")
+            return None
+        spell_index = int(choice) - 1
+        if not (0 <= spell_index < len(self.spells)):
+            self.log("Invalid spell choice.")
+            return None
+        return self.spells[spell_index]
+
     def use_technique(self) -> bool:
-        if self.skill_tree["arcane"] <= 0:
-            self.log("Technique locked. Learn Arcane in skill tree.")
+        if not self.spells:
+            self.log("Magic locked. Learn Arcane in skill tree.")
             return False
 
-        mp_cost = max(1, 4 - self.skill_tree["arcane"])
+        if self.pending_chant_spell and self.pending_chant_spell.name == "God's Wrath":
+            self.pending_chant_spell = None
+            return self.cast_gods_wrath(ready=True)
+
+        spell = self.choose_spell()
+        if spell is None:
+            return False
+        if spell.name == "Comet Missile":
+            return self.cast_comet_missile(spell)
+        if spell.name == "Flare Curtain":
+            return self.cast_flare_curtain(spell)
+        if spell.name == "God's Wrath":
+            self.pending_chant_spell = spell
+            self.log(f"You begin chanting {spell.rarity} God's Wrath...")
+            return True
+
+        self.log("Unknown spell.")
+        return False
+
+    def apply_spell_damage(self, enemy: Entity, dmg: int, spell_label: str) -> None:
+        enemy.hp -= dmg
+        self.log(f"{spell_label} deals {dmg} damage.")
+        if enemy.hp <= 0:
+            self.enemies.remove(enemy)
+            self.log("Enemy defeated by magic.")
+            xp_gain = 3 + self.floor
+            self.gain_xp(xp_gain)
+
+    def cast_comet_missile(self, spell: Spell) -> bool:
+        base_cost = 2
+        mp_cost = base_cost + self.spell_mp_bonus(spell.rarity)
         if self.player_mp < mp_cost:
             self.log(f"Not enough MP. Need {mp_cost} MP.")
             return False
 
         for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
-            enemy = self.get_enemy_at(self.player.x + dx, self.player.y + dy)
-            if enemy:
-                self.player_mp -= mp_cost
-                dmg = self.player.atk + (2 * self.skill_tree["arcane"]) + self.level
-                enemy.hp -= dmg
-                self.log(f"Arcane Strike deals {dmg} damage (MP -{mp_cost}).")
-                if enemy.hp <= 0:
-                    self.enemies.remove(enemy)
-                    self.log("Enemy defeated by technique.")
-                    xp_gain = 3 + self.floor
-                    self.gain_xp(xp_gain)
-                return True
+            x, y = self.player.x + dx, self.player.y + dy
+            while 0 <= x < self.width and 0 <= y < self.height and self.board[y][x] != WALL:
+                enemy = self.get_enemy_at(x, y)
+                if enemy:
+                    self.player_mp -= mp_cost
+                    base = self.damage(self.player.atk, enemy.defense)
+                    dmg = max(1, int(base * self.spell_power_multiplier(spell.rarity)))
+                    self.apply_spell_damage(enemy, dmg, f"{spell.rarity} Comet Missile")
+                    self.log(f"MP -{mp_cost}.")
+                    return True
+                x += dx
+                y += dy
 
-        self.log("No enemy adjacent for technique.")
+        self.log("No enemy in a straight line for Comet Missile.")
         return False
+
+    def cast_flare_curtain(self, spell: Spell) -> bool:
+        base_cost = 3
+        mp_cost = base_cost + self.spell_mp_bonus(spell.rarity)
+        if self.player_mp < mp_cost:
+            self.log(f"Not enough MP. Need {mp_cost} MP.")
+            return False
+
+        targets = []
+        for enemy in self.enemies:
+            if max(abs(enemy.x - self.player.x), abs(enemy.y - self.player.y)) <= 1:
+                targets.append(enemy)
+        if not targets:
+            self.log("No enemies around you for Flare Curtain.")
+            return False
+
+        self.player_mp -= mp_cost
+        for enemy in list(targets):
+            base = self.damage(self.player.atk, enemy.defense)
+            dmg = max(1, int(base * self.spell_power_multiplier(spell.rarity)))
+            self.apply_spell_damage(enemy, dmg, f"{spell.rarity} Flare Curtain")
+        self.log(f"MP -{mp_cost}.")
+        return True
+
+    def cast_gods_wrath(self, ready: bool = False) -> bool:
+        spell = next((s for s in reversed(self.spells) if s.name == "God's Wrath"), None)
+        if spell is None:
+            self.log("You do not know God's Wrath.")
+            return False
+
+        base_cost = 4
+        mp_cost = base_cost + self.spell_mp_bonus(spell.rarity)
+        if self.player_mp < mp_cost:
+            self.log(f"Not enough MP. Need {mp_cost} MP.")
+            return False
+        if not self.enemies:
+            self.log("No target for God's Wrath.")
+            return False
+
+        if not ready:
+            self.pending_chant_spell = spell
+            self.log(f"You begin chanting {spell.rarity} God's Wrath...")
+            return True
+
+        target = max(self.enemies, key=lambda e: (e.hp, -abs(e.x - self.player.x) - abs(e.y - self.player.y)))
+        self.player_mp -= mp_cost
+        base = self.damage(self.player.atk, target.defense)
+        dmg = max(1, int(base * 1.5 * self.spell_power_multiplier(spell.rarity)))
+        self.apply_spell_damage(target, dmg, f"{spell.rarity} God's Wrath")
+        self.log(f"MP -{mp_cost}.")
+        return True
 
     def attack_adjacent(self) -> None:
         for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:

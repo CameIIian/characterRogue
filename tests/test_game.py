@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from game import FLOOR, WALL, Entity, Game
+from game import BOSS, FLOOR, MINIBOSS, WALL, Entity, Game, Spell
 
 
 class GameTests(unittest.TestCase):
@@ -81,7 +81,7 @@ class GameTests(unittest.TestCase):
 
         self.assertTrue(upgraded)
         self.assertEqual(g.skill_points, 0)
-        self.assertEqual(g.player.atk, atk_before + 1)
+        self.assertEqual(g.player.atk, atk_before + 2)
 
     def test_technique_consumes_mp_and_damages_enemy(self):
         g = Game(seed=1)
@@ -90,7 +90,7 @@ class GameTests(unittest.TestCase):
             for x in range(1, 4):
                 g.board[y][x] = FLOOR
         g.player.x, g.player.y = 2, 2
-        g.skill_tree["arcane"] = 1
+        g.spells = [Spell("Flare Curtain", "Common")]
         g.player_mp = 5
         enemy = Entity(2, 1, hp=20, atk=1, defense=0)
         g.enemies = [enemy]
@@ -110,6 +110,74 @@ class GameTests(unittest.TestCase):
 
         self.assertTrue(opened)
         self.assertEqual(g.skill_tree["vitality"], 1)
+
+    def test_arcane_upgrade_learns_random_spell(self):
+        g = Game(seed=1)
+        g.skill_points = 1
+        with patch.object(g.rng, "choice", return_value="Comet Missile"):
+            upgraded = g.use_skill_point("a")
+        self.assertTrue(upgraded)
+        self.assertEqual(g.skill_tree["arcane"], 1)
+        self.assertEqual(len(g.spells), 1)
+        self.assertEqual(g.spells[0].name, "Comet Missile")
+
+    def test_render_uses_miniboss_and_boss_icons(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 1, 1
+        g.stairs = (3, 1)
+        g.items = []
+        g.enemies = [
+            Entity(2, 2, hp=1, atk=1, defense=0, kind="miniboss"),
+            Entity(3, 3, hp=1, atk=1, defense=0, kind="boss"),
+        ]
+
+        rendered = g.render()
+
+        self.assertIn(MINIBOSS, rendered)
+        self.assertIn(BOSS, rendered)
+
+    def test_comet_missile_hits_straight_line_enemy(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player_mp = 10
+        g.spells = [Spell("Comet Missile", "Common")]
+        target = Entity(2, 4, hp=10, atk=1, defense=0)
+        g.enemies = [target]
+
+        used = g.use_technique()
+
+        self.assertTrue(used)
+        self.assertLess(target.hp, 10)
+        self.assertLess(g.player_mp, 10)
+
+    def test_gods_wrath_requires_one_turn_chant(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player_mp = 10
+        g.spells = [Spell("God's Wrath", "Common")]
+        g.enemies = [Entity(2, 1, hp=10, atk=1, defense=0), Entity(1, 2, hp=20, atk=1, defense=0)]
+
+        first = g.use_technique()
+        hp_before = max(e.hp for e in g.enemies)
+        second = g.use_technique()
+        hp_after = max(e.hp for e in g.enemies)
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        self.assertEqual(hp_before, 20)
+        self.assertLess(hp_after, hp_before)
 
     def test_status_lines_layout_matches_expected_order(self):
         g = Game(seed=1)
