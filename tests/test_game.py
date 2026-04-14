@@ -201,6 +201,71 @@ class GameTests(unittest.TestCase):
         self.assertEqual(len(g.items), 1)
         self.assertIn(g.items[0].rarity, {"Rare", "Epic", "Legendary"})
 
+    def test_floor_ten_has_boss(self):
+        g = Game(seed=1)
+        g.floor = 10
+        g.generate_floor()
+
+        bosses = [enemy for enemy in g.enemies if enemy.kind == "boss"]
+        self.assertEqual(len(bosses), 1)
+
+    def test_boss_defeat_drops_legendary_item(self):
+        g = Game(seed=1)
+        g.floor = 10
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 99
+        boss = Entity(3, 2, hp=1, atk=1, defense=0, kind="boss")
+        g.enemies = [boss]
+        g.items = []
+
+        g.move_player(1, 0)
+
+        self.assertEqual(len(g.enemies), 0)
+        self.assertEqual(len(g.items), 1)
+        self.assertEqual(g.items[0].rarity, "Legendary")
+
+    def test_boss_summon_spawns_two_minions_away_from_player(self):
+        g = Game(seed=1, width=8, height=8)
+        g.board = [[WALL for _ in range(8)] for _ in range(8)]
+        for y in range(1, 7):
+            for x in range(1, 7):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 3, 3
+        boss = Entity(5, 5, hp=30, atk=9, defense=5, kind="boss")
+        g.enemies = [boss]
+
+        summoned = g.summon_boss_minions(2)
+
+        self.assertEqual(summoned, 2)
+        spawned = [e for e in g.enemies if e is not boss]
+        self.assertEqual(len(spawned), 2)
+        for minion in spawned:
+            self.assertGreaterEqual(abs(minion.x - g.player.x) + abs(minion.y - g.player.y), 2)
+            self.assertEqual((minion.hp, minion.atk, minion.defense), (14, 6, 3))
+
+    def test_boss_enrage_triggers_once_and_fully_heals(self):
+        g = Game(seed=1)
+        boss = Entity(4, 4, hp=14, atk=9, defense=5, kind="boss")
+        g.boss_laser_targets = []
+        g.enemies = [boss]
+        g.player.x, g.player.y = 1, 1
+
+        with patch.object(g.rng, "choice", return_value="attack"):
+            g.boss_turn(boss)
+        self.assertTrue(g.boss_enraged)
+        self.assertEqual(boss.hp, 30)
+        self.assertEqual((boss.atk, boss.defense), (11, 6))
+
+        previous_stats = (boss.hp, boss.atk, boss.defense)
+        boss.hp = 10
+        with patch.object(g.rng, "choice", return_value="attack"):
+            g.boss_turn(boss)
+        self.assertEqual((boss.hp, boss.atk, boss.defense), (10, previous_stats[1], previous_stats[2]))
+
 
 if __name__ == "__main__":
     unittest.main()
