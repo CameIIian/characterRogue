@@ -28,6 +28,7 @@ class ItemEntity:
     x: int
     y: int
     kind: str
+    rarity: str
 
 
 class Game:
@@ -39,7 +40,7 @@ class Game:
         self.moves = 0
         self.max_floor = 10
         self.message_log: deque[str] = deque(maxlen=7)
-        self.inventory: List[str] = []
+        self.inventory: List[Tuple[str, str]] = []
         self.player = Entity(0, 0, hp=10, atk=3, defense=1)
         self.player_max_hp = 10
         self.player_max_mp = 5
@@ -63,6 +64,16 @@ class Game:
         self.stairs: Tuple[int, int] = (0, 0)
 
         self.generate_floor()
+
+    @staticmethod
+    def rarity_tiers() -> List[Tuple[str, int]]:
+        return [
+            ("Common", 50),
+            ("Uncommon", 28),
+            ("Rare", 14),
+            ("Epic", 6),
+            ("Legendary", 2),
+        ]
 
     @staticmethod
     def help_lines() -> List[str]:
@@ -147,7 +158,7 @@ class Game:
         item_count = min(1 + self.floor // 2, 4)
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
-            self.items.append(ItemEntity(ix, iy, self.rng.choice(item_pool)))
+            self.items.append(ItemEntity(ix, iy, self.rng.choice(item_pool), self.roll_item_rarity()))
 
     def random_floor_only(self, exclude: Optional[set] = None) -> Tuple[int, int]:
         exclude = exclude or set()
@@ -175,13 +186,25 @@ class Game:
         return "\n".join("".join(row) for row in temp)
 
     def status_line(self) -> str:
-        return (
-            f"HP: {self.player.hp}/{self.player_max_hp}  "
-            f"MP: {self.player_mp}/{self.player_max_mp}  "
-            f"ATK: {self.player.atk}  DEF: {self.player.defense}  "
-            f"Lv: {self.level}  XP: {self.xp}/{self.next_level_xp}  SP: {self.skill_points}  "
-            f"Floor: {self.floor}  Moves: {self.moves}"
-        )
+        return " | ".join(self.status_lines())
+
+    def status_lines(self) -> List[str]:
+        return [
+            f"Floor: {self.floor}  Moves: {self.moves}",
+            f"HP: {self.player.hp}/{self.player_max_hp}  MP: {self.player_mp}/{self.player_max_mp}  SP: {self.skill_points}",
+            f"Lv: {self.level}  XP: {self.xp}/{self.next_level_xp}  ATK: {self.player.atk}  DEF: {self.player.defense}",
+        ]
+
+    def roll_item_rarity(self) -> str:
+        tiers = self.rarity_tiers()
+        total_weight = sum(weight for _, weight in tiers)
+        pick = self.rng.randint(1, total_weight)
+        cumulative = 0
+        for rarity, weight in tiers:
+            cumulative += weight
+            if pick <= cumulative:
+                return rarity
+        return "Common"
 
     def get_enemy_at(self, x: int, y: int) -> Optional[Entity]:
         for e in self.enemies:
@@ -204,27 +227,39 @@ class Game:
         if item is None:
             return
         self.items.remove(item)
-        self.inventory.append(item.kind)
-        self.log(f"You picked up a {item.kind}.")
+        self.inventory.append((item.rarity, item.kind))
+        self.log(f"You picked up a {item.rarity} {item.kind}.")
 
     def use_item(self) -> None:
         if not self.inventory:
             self.log("Inventory is empty.")
             return
 
-        item = self.inventory.pop(0)
-        if item == "Potion":
-            self.player.hp = min(self.player_max_hp, self.player.hp + 5)
-            self.log("You used Potion and restored 5 HP.")
-        elif item == "Power":
-            self.player.atk += 1
-            self.log("You used Power and gained +1 ATK.")
-        elif item == "Shield":
-            self.player.defense += 1
-            self.log("You used Shield and gained +1 DEF.")
-        elif item == "Ether":
-            self.player_mp = min(self.player_max_mp, self.player_mp + 4)
-            self.log("You used Ether and restored 4 MP.")
+        rarity, kind = self.inventory.pop(0)
+        rarity_bonus = {
+            "Common": 0,
+            "Uncommon": 1,
+            "Rare": 2,
+            "Epic": 4,
+            "Legendary": 6,
+        }.get(rarity, 0)
+
+        if kind == "Potion":
+            restore = 4 + (rarity_bonus * 2)
+            self.player.hp = min(self.player_max_hp, self.player.hp + restore)
+            self.log(f"You used {rarity} Potion and restored {restore} HP.")
+        elif kind == "Power":
+            gain = 1 + (rarity_bonus // 2)
+            self.player.atk += gain
+            self.log(f"You used {rarity} Power and gained +{gain} ATK.")
+        elif kind == "Shield":
+            gain = 1 + (rarity_bonus // 2)
+            self.player.defense += gain
+            self.log(f"You used {rarity} Shield and gained +{gain} DEF.")
+        elif kind == "Ether":
+            restore = 3 + (rarity_bonus * 2)
+            self.player_mp = min(self.player_max_mp, self.player_mp + restore)
+            self.log(f"You used {rarity} Ether and restored {restore} MP.")
 
     def gain_xp(self, amount: int) -> None:
         self.xp += amount
@@ -413,7 +448,7 @@ class Game:
         if not self.inventory:
             self.log("Inventory: (empty)")
             return
-        self.log("Inventory: " + ", ".join(self.inventory))
+        self.log("Inventory: " + ", ".join(f"{rarity} {kind}" for rarity, kind in self.inventory))
 
     def take_turn(self, cmd: str) -> bool:
         acted = False
@@ -473,7 +508,8 @@ def main() -> None:
 
     while True:
         print(game.render())
-        print(game.status_line())
+        for line in game.status_lines():
+            print(line)
         if game.message_log:
             for line in game.message_log:
                 print(line)
