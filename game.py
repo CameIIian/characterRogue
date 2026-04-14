@@ -38,10 +38,24 @@ class Game:
         self.floor = 1
         self.moves = 0
         self.max_floor = 10
-        self.message_log: deque[str] = deque(maxlen=5)
+        self.message_log: deque[str] = deque(maxlen=7)
         self.inventory: List[str] = []
         self.player = Entity(0, 0, hp=10, atk=3, defense=1)
         self.player_max_hp = 10
+        self.player_max_mp = 5
+        self.player_mp = 5
+
+        self.level = 1
+        self.xp = 0
+        self.next_level_xp = 10
+        self.skill_points = 0
+
+        self.skill_tree = {
+            "vitality": 0,
+            "strength": 0,
+            "guard": 0,
+            "arcane": 0,
+        }
 
         self.board: List[List[str]] = []
         self.enemies: List[Entity] = []
@@ -53,7 +67,8 @@ class Game:
     @staticmethod
     def help_lines() -> List[str]:
         return [
-            "Commands: w/a/s/d=move, f=attack, .=wait, i=inventory, u=use item, h=help, q=quit",
+            "Commands: w/a/s/d=move, f=attack, t=technique, .=wait, i=inventory, u=use item, k=skill, h=help, q=quit",
+            "Skill command: k, then choose v=str HP, s=str ATK, g=str DEF, a=arcane tech",
             "Icons: #=wall, .=floor, @=you, E=enemy, I=item, >=stairs",
         ]
 
@@ -76,7 +91,6 @@ class Game:
         raise RuntimeError("Could not find an empty tile")
 
     def carve_paths(self) -> None:
-        # random-walk style carving
         x = self.rng.randint(1, self.width - 2)
         y = self.rng.randint(1, self.height - 2)
         self.board[y][x] = FLOOR
@@ -127,7 +141,7 @@ class Game:
             ex, ey = self.random_empty_tile()
             self.enemies.append(Entity(ex, ey, hp=3 + self.floor, atk=2 + self.floor // 2, defense=0 + self.floor // 3))
 
-        item_pool = ["Potion", "Power", "Shield"]
+        item_pool = ["Potion", "Power", "Shield", "Ether"]
         item_count = min(1 + self.floor // 2, 4)
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
@@ -161,7 +175,9 @@ class Game:
     def status_line(self) -> str:
         return (
             f"HP: {self.player.hp}/{self.player_max_hp}  "
+            f"MP: {self.player_mp}/{self.player_max_mp}  "
             f"ATK: {self.player.atk}  DEF: {self.player.defense}  "
+            f"Lv: {self.level}  XP: {self.xp}/{self.next_level_xp}  SP: {self.skill_points}  "
             f"Floor: {self.floor}  Moves: {self.moves}"
         )
 
@@ -204,6 +220,90 @@ class Game:
         elif item == "Shield":
             self.player.defense += 1
             self.log("You used Shield and gained +1 DEF.")
+        elif item == "Ether":
+            self.player_mp = min(self.player_max_mp, self.player_mp + 4)
+            self.log("You used Ether and restored 4 MP.")
+
+    def gain_xp(self, amount: int) -> None:
+        self.xp += amount
+        self.log(f"You gained {amount} XP.")
+        while self.xp >= self.next_level_xp:
+            self.xp -= self.next_level_xp
+            self.level_up()
+
+    def _stat_growth(self, low: int, high: int) -> int:
+        chance = min(0.35 + (self.level * 0.05), 0.95)
+        gain = 0
+        for _ in range(low):
+            gain += 1
+        for _ in range(high - low):
+            if self.rng.random() < chance:
+                gain += 1
+        return max(1, gain)
+
+    def level_up(self) -> None:
+        self.level += 1
+        hp_gain = self._stat_growth(1, 3)
+        mp_gain = self._stat_growth(1, 2)
+        atk_gain = self._stat_growth(1, 2)
+        def_gain = self._stat_growth(1, 2)
+
+        self.player_max_hp += hp_gain
+        self.player_max_mp += mp_gain
+        self.player.atk += atk_gain
+        self.player.defense += def_gain
+        self.player.hp = self.player_max_hp
+        self.player_mp = self.player_max_mp
+        self.skill_points += 1
+
+        self.next_level_xp = int(self.next_level_xp * 1.35)
+        self.log(
+            f"Level up! Lv {self.level} (+HP {hp_gain}, +MP {mp_gain}, +ATK {atk_gain}, +DEF {def_gain}). HP/MP fully restored."
+        )
+        self.log("You gained 1 skill point.")
+
+    def use_skill_point(self, skill: str) -> bool:
+        if self.skill_points <= 0:
+            self.log("No skill points available.")
+            return False
+
+        if skill == "v":
+            self.skill_tree["vitality"] += 1
+            self.player_max_hp += 2
+            self.player.hp = self.player_max_hp
+            self.log("Vitality upgraded: Max HP +2.")
+        elif skill == "s":
+            self.skill_tree["strength"] += 1
+            self.player.atk += 1
+            self.log("Strength upgraded: ATK +1.")
+        elif skill == "g":
+            self.skill_tree["guard"] += 1
+            self.player.defense += 1
+            self.log("Guard upgraded: DEF +1.")
+        elif skill == "a":
+            self.skill_tree["arcane"] += 1
+            self.log("Arcane upgraded: Technique damage increased.")
+        else:
+            self.log("Unknown skill.")
+            return False
+
+        self.skill_points -= 1
+        return True
+
+    def open_skill_menu(self) -> bool:
+        if self.skill_points <= 0:
+            self.log("No skill points. Defeat enemies and level up.")
+            return False
+
+        self.log(
+            f"Skill Tree | SP:{self.skill_points} VIT:{self.skill_tree['vitality']} STR:{self.skill_tree['strength']} "
+            f"GRD:{self.skill_tree['guard']} ARC:{self.skill_tree['arcane']}"
+        )
+        choice = input("Spend point [v/s/g/a, other=cancel]: ").strip().lower()[:1]
+        if not choice:
+            self.log("Skill upgrade cancelled.")
+            return False
+        return self.use_skill_point(choice)
 
     def move_player(self, dx: int, dy: int) -> None:
         nx, ny = self.player.x + dx, self.player.y + dy
@@ -234,11 +334,40 @@ class Game:
         if enemy.hp <= 0:
             self.enemies.remove(enemy)
             self.log("Enemy defeated.")
+            xp_gain = 3 + self.floor
+            self.gain_xp(xp_gain)
             return
 
         retaliation = self.damage(enemy.atk, self.player.defense)
         self.player.hp -= retaliation
         self.log(f"Enemy hits you for {retaliation} damage.")
+
+    def use_technique(self) -> bool:
+        if self.skill_tree["arcane"] <= 0:
+            self.log("Technique locked. Learn Arcane in skill tree.")
+            return False
+
+        mp_cost = max(1, 4 - self.skill_tree["arcane"])
+        if self.player_mp < mp_cost:
+            self.log(f"Not enough MP. Need {mp_cost} MP.")
+            return False
+
+        for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+            enemy = self.get_enemy_at(self.player.x + dx, self.player.y + dy)
+            if enemy:
+                self.player_mp -= mp_cost
+                dmg = self.player.atk + (2 * self.skill_tree["arcane"]) + self.level
+                enemy.hp -= dmg
+                self.log(f"Arcane Strike deals {dmg} damage (MP -{mp_cost}).")
+                if enemy.hp <= 0:
+                    self.enemies.remove(enemy)
+                    self.log("Enemy defeated by technique.")
+                    xp_gain = 3 + self.floor
+                    self.gain_xp(xp_gain)
+                return True
+
+        self.log("No enemy adjacent for technique.")
+        return False
 
     def attack_adjacent(self) -> None:
         for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
@@ -304,11 +433,15 @@ class Game:
         elif cmd == "f":
             self.attack_adjacent()
             acted = True
+        elif cmd == "t":
+            acted = self.use_technique()
         elif cmd == "i":
             self.show_inventory()
         elif cmd == "u":
             self.use_item()
             acted = True
+        elif cmd == "k":
+            self.open_skill_menu()
         elif cmd == "h":
             for line in self.help_lines():
                 self.log(line)
@@ -325,7 +458,6 @@ class Game:
 
     def won(self) -> bool:
         return self.floor > self.max_floor
-
 
 
 def _handle_sigint(_sig, _frame):
@@ -352,7 +484,7 @@ def main() -> None:
             print("You reached floor 10 and escaped. Victory!")
             break
 
-        cmd = input("Command [w/a/s/d, f, ., i, u, h, q]: ").strip().lower()[:1]
+        cmd = input("Command [w/a/s/d, f, t, ., i, u, k, h, q]: ").strip().lower()[:1]
         if not cmd:
             continue
         if not game.take_turn(cmd):
