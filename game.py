@@ -67,8 +67,10 @@ class Game:
     @staticmethod
     def help_lines() -> List[str]:
         return [
-            "Commands: w/a/s/d=move, f=attack, t=technique, .=wait, i=inventory, u=use item, k=skill, h=help, q=quit",
+            "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item,", 
+            "Attack Commands: f=attack, t=technique,k=skill,",
             "Skill command: k, then choose v=str HP, s=str ATK, g=str DEF, a=arcane tech",
+            "System Commands: h=help, q=quit"
             "Icons: #=wall, .=floor, @=you, E=enemy, I=item, >=stairs",
         ]
 
