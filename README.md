@@ -35,6 +35,16 @@ python3 game.py
 - 階段 `>` に到達すると次フロア
 - 10階層到達で勝利、HP 0で敗北
 
+## アイテムの種類とレアリティ
+
+- アイテム種類: `Potion` / `Power` / `Shield` / `Ether`
+  - `Potion`: HP回復
+  - `Power`: ATK上昇
+  - `Shield`: DEF上昇
+  - `Ether`: MP回復
+- レアリティ: `Common` / `Uncommon` / `Rare` / `Epic` / `Legendary`
+- レアリティが高いほど出現率は低く、効果量は高くなります。
+
 ## テスト
 
 ```bash

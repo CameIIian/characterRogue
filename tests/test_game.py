@@ -111,6 +111,51 @@ class GameTests(unittest.TestCase):
         self.assertTrue(opened)
         self.assertEqual(g.skill_tree["vitality"], 1)
 
+    def test_status_lines_layout_matches_expected_order(self):
+        g = Game(seed=1)
+
+        lines = g.status_lines()
+
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].startswith("Floor:"))
+        self.assertIn("Moves:", lines[0])
+        self.assertTrue(lines[1].startswith("HP:"))
+        self.assertIn("MP:", lines[1])
+        self.assertIn("SP:", lines[1])
+        self.assertTrue(lines[2].startswith("Lv:"))
+        self.assertIn("XP:", lines[2])
+        self.assertIn("ATK:", lines[2])
+        self.assertIn("DEF:", lines[2])
+
+    def test_legendary_item_is_stronger_than_common_item(self):
+        g = Game(seed=1)
+        g.player.hp = 1
+        g.player_max_hp = 30
+
+        g.inventory.append(("Common", "Potion"))
+        g.use_item()
+        common_hp = g.player.hp
+
+        g.player.hp = 1
+        g.inventory.append(("Legendary", "Potion"))
+        g.use_item()
+        legendary_hp = g.player.hp
+
+        self.assertGreater(legendary_hp, common_hp)
+
+    def test_item_rarity_distribution_favors_common(self):
+        g = Game(seed=1)
+        counts = {}
+
+        for _ in range(2000):
+            rarity = g.roll_item_rarity()
+            counts[rarity] = counts.get(rarity, 0) + 1
+
+        self.assertGreater(counts["Common"], counts["Uncommon"])
+        self.assertGreater(counts["Uncommon"], counts["Rare"])
+        self.assertGreater(counts["Rare"], counts["Epic"])
+        self.assertGreater(counts["Epic"], counts["Legendary"])
+
 
 if __name__ == "__main__":
     unittest.main()
