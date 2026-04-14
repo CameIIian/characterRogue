@@ -50,6 +50,13 @@ class Game:
 
         self.generate_floor()
 
+    @staticmethod
+    def help_lines() -> List[str]:
+        return [
+            "Commands: w/a/s/d=move, f=attack, .=wait, i=inventory, u=use item, h=help, q=quit",
+            "Icons: #=wall, .=floor, @=you, E=enemy, I=item, >=stairs",
+        ]
+
     def log(self, msg: str) -> None:
         self.message_log.append(msg)
 
@@ -233,6 +240,14 @@ class Game:
         self.player.hp -= retaliation
         self.log(f"Enemy hits you for {retaliation} damage.")
 
+    def attack_adjacent(self) -> None:
+        for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+            enemy = self.get_enemy_at(self.player.x + dx, self.player.y + dy)
+            if enemy:
+                self.combat(enemy)
+                return
+        self.log("No enemy adjacent to attack.")
+
     def enemy_turn(self) -> None:
         for enemy in list(self.enemies):
             if abs(enemy.x - self.player.x) + abs(enemy.y - self.player.y) == 1:
@@ -286,11 +301,17 @@ class Game:
         elif cmd == ".":
             self.log("You wait.")
             acted = True
+        elif cmd == "f":
+            self.attack_adjacent()
+            acted = True
         elif cmd == "i":
             self.show_inventory()
         elif cmd == "u":
             self.use_item()
             acted = True
+        elif cmd == "h":
+            for line in self.help_lines():
+                self.log(line)
         elif cmd == "q":
             return False
         else:
@@ -331,7 +352,7 @@ def main() -> None:
             print("You reached floor 10 and escaped. Victory!")
             break
 
-        cmd = input("Command [w/a/s/d, ., i, u, q]: ").strip().lower()[:1]
+        cmd = input("Command [w/a/s/d, f, ., i, u, h, q]: ").strip().lower()[:1]
         if not cmd:
             continue
         if not game.take_turn(cmd):
