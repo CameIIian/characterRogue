@@ -35,6 +35,30 @@ class GameTests(unittest.TestCase):
         g.move_player(1, 0)
         self.assertEqual(len(g.enemies), 0)
 
+    def test_attack_command_hits_adjacent_enemy(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 3
+        enemy = Entity(2, 1, hp=2, atk=1, defense=0)
+        g.enemies = [enemy]
+        g.items = []
+
+        g.take_turn("f")
+
+        self.assertEqual(len(g.enemies), 0)
+        self.assertEqual(g.moves, 1)
+
+    def test_help_command_shows_commands_and_icons(self):
+        g = Game(seed=1)
+        g.take_turn("h")
+        log_text = "\n".join(g.message_log)
+        self.assertIn("Commands:", log_text)
+        self.assertIn("Icons:", log_text)
+
 
 if __name__ == "__main__":
     unittest.main()
