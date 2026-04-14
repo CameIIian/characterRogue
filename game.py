@@ -14,6 +14,7 @@ MINIBOSS = "M"
 BOSS = "B"
 ITEM = "I"
 STAIRS = ">"
+LASER_WARNING = ","
 
 
 @dataclass
@@ -42,12 +43,12 @@ class Spell:
 
 class Game:
     def __init__(self, width: int = 10, height: int = 10, seed: Optional[int] = None):
+        self.base_width = width
         self.width = width
         self.height = height
         self.rng = random.Random(seed)
         self.floor = 1
         self.moves = 0
-        self.max_floor = 10
         self.message_log: deque[str] = deque(maxlen=7)
         self.inventory: List[Tuple[str, str]] = []
         self.player = Entity(0, 0, hp=10, atk=3, defense=1)
@@ -78,6 +79,22 @@ class Game:
 
         self.generate_floor()
 
+    def current_cycle(self) -> int:
+        # 1 cycle = 10 floors. floor 1-10 => cycle 0, 11-20 => cycle 1 ...
+        return (self.floor - 1) // 10
+
+    def apply_cycle_growth(self) -> None:
+        cycle = self.current_cycle()
+        self.width = self.base_width + (cycle * 2)
+
+    @staticmethod
+    def is_miniboss_floor(floor: int) -> bool:
+        return floor % 10 == 5
+
+    @staticmethod
+    def is_boss_floor(floor: int) -> bool:
+        return floor % 10 == 0
+
     @staticmethod
     def rarity_tiers() -> List[Tuple[str, int]]:
         return [
@@ -95,7 +112,7 @@ class Game:
             "Attack Commands: f=attack, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
             "System Commands: h=help, q=quit",
-            "Icons: #=wall, .=floor, @=you, E=enemy, M=miniboss, B=boss, I=item, >=stairs",
+            "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, M=miniboss, B=boss, I=item, >=stairs",
         ]
 
     def log(self, msg: str) -> None:
@@ -150,6 +167,7 @@ class Game:
         return False
 
     def generate_floor(self) -> None:
+        self.apply_cycle_growth()
         self.boss_laser_targets = []
         self.boss_enraged = False
         while True:
@@ -164,41 +182,45 @@ class Game:
             if self.is_reachable((self.player.x, self.player.y), self.stairs):
                 break
 
-        enemy_count = min(2 + self.floor, 8)
+        cycle = self.current_cycle()
+        enemy_count = min(2 + self.floor + cycle, 12)
+        enemy_hp = 4 + (self.floor * 2) + (cycle * 4)
+        enemy_atk = 2 + (self.floor // 3) + (cycle * 2) + (self.floor // 2)
+        enemy_def = (self.floor // 4) + cycle
         for _ in range(enemy_count):
             ex, ey = self.random_empty_tile()
             self.enemies.append(
                 Entity(
                     ex,
                     ey,
-                    hp=3 + self.floor,
-                    atk=2 + self.floor // 2,
-                    defense=self.floor // 3,
+                    hp=enemy_hp,
+                    atk=enemy_atk,
+                    defense=enemy_def,
                 )
             )
 
-        if self.floor == 5:
+        if self.is_miniboss_floor(self.floor):
             bx, by = self.random_empty_tile()
             self.enemies.append(
                 Entity(
                     bx,
                     by,
-                    hp=14,
-                    atk=6,
-                    defense=3,
+                    hp=16 + (self.floor * 2) + (cycle * 6),
+                    atk=6 + (self.floor // 2) + (cycle * 2),
+                    defense=3 + (self.floor // 4) + cycle,
                     kind="miniboss",
                 )
             )
             self.log("A miniboss lurks on this floor. Defeat it to unlock the stairs.")
-        elif self.floor == 10:
+        elif self.is_boss_floor(self.floor):
             bx, by = self.random_empty_tile()
             self.enemies.append(
                 Entity(
                     bx,
                     by,
-                    hp=30,
-                    atk=9,
-                    defense=5,
+                    hp=30 + (self.floor * 3) + (cycle * 8),
+                    atk=9 + (self.floor // 2) + (cycle * 3),
+                    defense=5 + (self.floor // 4) + cycle,
                     kind="boss",
                 )
             )
@@ -224,6 +246,11 @@ class Game:
 
     def render(self) -> str:
         temp = [row[:] for row in self.board]
+
+        for tx, ty in self.boss_laser_targets:
+            if 0 <= tx < self.width and 0 <= ty < self.height and temp[ty][tx] == FLOOR:
+                temp[ty][tx] = LASER_WARNING
+
         sx, sy = self.stairs
         temp[sy][sx] = STAIRS
 
@@ -435,10 +462,10 @@ class Game:
         self.pickup_item()
 
         if (nx, ny) == self.stairs:
-            if self.floor == 5 and self.miniboss_alive():
+            if self.is_miniboss_floor(self.floor) and self.miniboss_alive():
                 self.log("A mysterious seal blocks the stairs. Defeat the miniboss first.")
                 return
-            if self.floor == 10 and self.boss_alive():
+            if self.is_boss_floor(self.floor) and self.boss_alive():
                 self.log("A tyrant's seal blocks the stairs. Defeat the Great Boss first.")
                 return
             self.advance_floor()
@@ -655,7 +682,8 @@ class Game:
     def boss_turn(self, boss: Entity) -> None:
         if boss.hp < 15 and not self.boss_enraged:
             self.boss_enraged = True
-            boss.hp = 30
+            enraged_hp = 30 + (self.floor * 3) + (self.current_cycle() * 8)
+            boss.hp = max(boss.hp, enraged_hp)
             boss.atk += 2
             boss.defense += 1
             self.log("The Great Boss powers up and fully regenerates!")
@@ -721,8 +749,17 @@ class Game:
                 candidates.append((x, y))
         self.rng.shuffle(candidates)
         summoned = 0
+        cycle = self.current_cycle()
         for x, y in candidates[:count]:
-            self.enemies.append(Entity(x, y, hp=14, atk=6, defense=3))
+            self.enemies.append(
+                Entity(
+                    x,
+                    y,
+                    hp=14 + self.floor + (cycle * 3),
+                    atk=6 + (self.floor // 3) + cycle,
+                    defense=3 + (self.floor // 5) + cycle,
+                )
+            )
             summoned += 1
         return summoned
 
@@ -754,10 +791,11 @@ class Game:
             self.log("The Great Boss fires a devastating laser through the marked lines!")
 
     def advance_floor(self) -> None:
+        previous_cycle = self.current_cycle()
         self.floor += 1
-        if self.floor > self.max_floor:
-            return
         self.log(f"You descend to floor {self.floor}.")
+        if self.current_cycle() > previous_cycle:
+            self.log("A new loop begins: enemies are empowered and the map grows wider.")
         self.generate_floor()
 
     def show_inventory(self) -> None:
@@ -803,14 +841,14 @@ class Game:
         else:
             self.log("Invalid command.")
 
-        if acted and self.floor <= self.max_floor:
+        if acted:
             self.moves += 1
             self.enemy_turn()
 
         return True
 
     def won(self) -> bool:
-        return self.floor > self.max_floor
+        return False
 
 
 def _handle_sigint(_sig, _frame):
@@ -834,10 +872,6 @@ def main() -> None:
         if game.player.hp <= 0:
             print("You died. Game Over.")
             break
-        if game.won():
-            print("You reached floor 10 and escaped. Victory!")
-            break
-
         cmd = input("Command [w/a/s/d, f, t, ., i, u, k, h, q]: ").strip().lower()[:1]
         if not cmd:
             continue

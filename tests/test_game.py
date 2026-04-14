@@ -313,7 +313,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(len(spawned), 2)
         for minion in spawned:
             self.assertGreaterEqual(abs(minion.x - g.player.x) + abs(minion.y - g.player.y), 2)
-            self.assertEqual((minion.hp, minion.atk, minion.defense), (14, 6, 3))
+            self.assertEqual((minion.hp, minion.atk, minion.defense), (15, 6, 3))
 
     def test_boss_enrage_triggers_once_and_fully_heals(self):
         g = Game(seed=1)
@@ -325,7 +325,7 @@ class GameTests(unittest.TestCase):
         with patch.object(g.rng, "choice", return_value="attack"):
             g.boss_turn(boss)
         self.assertTrue(g.boss_enraged)
-        self.assertEqual(boss.hp, 30)
+        self.assertEqual(boss.hp, 33)
         self.assertEqual((boss.atk, boss.defense), (11, 6))
 
         previous_stats = (boss.hp, boss.atk, boss.defense)
@@ -333,6 +333,34 @@ class GameTests(unittest.TestCase):
         with patch.object(g.rng, "choice", return_value="attack"):
             g.boss_turn(boss)
         self.assertEqual((boss.hp, boss.atk, boss.defense), (10, previous_stats[1], previous_stats[2]))
+
+    def test_floor_advances_beyond_ten(self):
+        g = Game(seed=1)
+        g.floor = 10
+        g.advance_floor()
+
+        self.assertEqual(g.floor, 11)
+        self.assertFalse(g.won())
+
+    def test_floor_fifteen_has_miniboss_and_twenty_has_boss(self):
+        g = Game(seed=1)
+        g.floor = 15
+        g.generate_floor()
+        self.assertEqual(len([e for e in g.enemies if e.kind == "miniboss"]), 1)
+
+        g.floor = 20
+        g.generate_floor()
+        self.assertEqual(len([e for e in g.enemies if e.kind == "boss"]), 1)
+
+    def test_new_loop_expands_map_width(self):
+        g = Game(seed=1, width=10, height=10)
+        g.floor = 10
+        g.width = 10
+
+        g.advance_floor()
+
+        self.assertEqual(g.floor, 11)
+        self.assertEqual(g.width, 12)
 
 
 if __name__ == "__main__":
