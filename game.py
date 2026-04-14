@@ -63,6 +63,8 @@ class Game:
         self.enemies: List[Entity] = []
         self.items: List[ItemEntity] = []
         self.stairs: Tuple[int, int] = (0, 0)
+        self.boss_laser_targets: List[Tuple[int, int]] = []
+        self.boss_enraged = False
 
         self.generate_floor()
 
@@ -138,6 +140,8 @@ class Game:
         return False
 
     def generate_floor(self) -> None:
+        self.boss_laser_targets = []
+        self.boss_enraged = False
         while True:
             self.board = [[WALL for _ in range(self.width)] for _ in range(self.height)]
             self.enemies = []
@@ -176,6 +180,19 @@ class Game:
                 )
             )
             self.log("A miniboss lurks on this floor. Defeat it to unlock the stairs.")
+        elif self.floor == 10:
+            bx, by = self.random_empty_tile()
+            self.enemies.append(
+                Entity(
+                    bx,
+                    by,
+                    hp=30,
+                    atk=9,
+                    defense=5,
+                    kind="boss",
+                )
+            )
+            self.log("The Great Boss awaits. Defeat it to unlock the stairs.")
 
         item_pool = ["Potion", "Power", "Shield", "Ether"]
         item_count = min(1 + self.floor // 2, 4)
@@ -243,6 +260,9 @@ class Game:
 
     def miniboss_alive(self) -> bool:
         return any(enemy.kind == "miniboss" for enemy in self.enemies)
+
+    def boss_alive(self) -> bool:
+        return any(enemy.kind == "boss" for enemy in self.enemies)
 
     def roll_high_rarity(self) -> str:
         high_tiers = [("Rare", 45), ("Epic", 35), ("Legendary", 20)]
@@ -401,6 +421,9 @@ class Game:
             if self.floor == 5 and self.miniboss_alive():
                 self.log("A mysterious seal blocks the stairs. Defeat the miniboss first.")
                 return
+            if self.floor == 10 and self.boss_alive():
+                self.log("A tyrant's seal blocks the stairs. Defeat the Great Boss first.")
+                return
             self.advance_floor()
 
     def combat(self, enemy: Entity) -> None:
@@ -417,6 +440,13 @@ class Game:
                 self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, self.roll_high_rarity()))
                 self.log("A treasure chest drops a high-rarity item.")
                 xp_gain = 12 + self.floor
+            elif enemy.kind == "boss":
+                self.log("Great Boss defeated! The stairs are now unsealed.")
+                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether"])
+                self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, "Legendary"))
+                self.log("A legendary treasure chest drops where the boss fell.")
+                self.boss_laser_targets = []
+                xp_gain = 24 + self.floor
             else:
                 self.log("Enemy defeated.")
                 xp_gain = 3 + self.floor
@@ -464,6 +494,9 @@ class Game:
 
     def enemy_turn(self) -> None:
         for enemy in list(self.enemies):
+            if enemy.kind == "boss":
+                self.boss_turn(enemy)
+                continue
             if abs(enemy.x - self.player.x) + abs(enemy.y - self.player.y) == 1:
                 dmg = self.damage(enemy.atk, self.player.defense)
                 self.player.hp -= dmg
@@ -484,6 +517,107 @@ class Game:
                     continue
                 enemy.x, enemy.y = nx, ny
                 break
+
+    def boss_turn(self, boss: Entity) -> None:
+        if boss.hp < 15 and not self.boss_enraged:
+            self.boss_enraged = True
+            boss.hp = 30
+            boss.atk += 2
+            boss.defense += 1
+            self.log("The Great Boss powers up and fully regenerates!")
+
+        if self.boss_laser_targets:
+            self.resolve_boss_laser()
+            self.boss_laser_targets = []
+            return
+
+        action = self.rng.choice(["attack", "summon", "telegraph"])
+        if action == "attack":
+            self.boss_attack_or_move(boss)
+        elif action == "summon":
+            summoned = self.summon_boss_minions(2)
+            if summoned == 0:
+                self.boss_attack_or_move(boss)
+            else:
+                self.log(f"The Great Boss summons {summoned} elite minions!")
+        else:
+            self.boss_laser_targets = self.collect_boss_laser_tiles(boss)
+            self.log("The Great Boss marks cardinal and diagonal lines for a laser strike!")
+
+    def boss_attack_or_move(self, boss: Entity) -> None:
+        if abs(boss.x - self.player.x) + abs(boss.y - self.player.y) == 1:
+            dmg = self.damage(boss.atk, self.player.defense)
+            self.player.hp -= dmg
+            self.log(f"The Great Boss crushes you for {dmg} damage!")
+            return
+
+        best = self.step_toward_player(boss)
+        if best:
+            boss.x, boss.y = best
+
+    def step_toward_player(self, enemy: Entity) -> Optional[Tuple[int, int]]:
+        best_tile = None
+        best_dist = abs(enemy.x - self.player.x) + abs(enemy.y - self.player.y)
+        for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+            nx, ny = enemy.x + dx, enemy.y + dy
+            if not (0 <= nx < self.width and 0 <= ny < self.height):
+                continue
+            if self.board[ny][nx] == WALL or (nx, ny) == (self.player.x, self.player.y):
+                continue
+            if self.get_enemy_at(nx, ny):
+                continue
+            dist = abs(nx - self.player.x) + abs(ny - self.player.y)
+            if dist < best_dist:
+                best_dist = dist
+                best_tile = (nx, ny)
+        return best_tile
+
+    def summon_boss_minions(self, count: int) -> int:
+        candidates = []
+        for y in range(1, self.height - 1):
+            for x in range(1, self.width - 1):
+                if self.board[y][x] != FLOOR:
+                    continue
+                if (x, y) == (self.player.x, self.player.y):
+                    continue
+                if any(e.x == x and e.y == y for e in self.enemies):
+                    continue
+                if abs(x - self.player.x) + abs(y - self.player.y) < 2:
+                    continue
+                candidates.append((x, y))
+        self.rng.shuffle(candidates)
+        summoned = 0
+        for x, y in candidates[:count]:
+            self.enemies.append(Entity(x, y, hp=14, atk=6, defense=3))
+            summoned += 1
+        return summoned
+
+    def collect_boss_laser_tiles(self, boss: Entity) -> List[Tuple[int, int]]:
+        targets: List[Tuple[int, int]] = []
+        for dx, dy in [
+            (0, -1),
+            (0, 1),
+            (-1, 0),
+            (1, 0),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+            (1, 1),
+        ]:
+            x, y = boss.x + dx, boss.y + dy
+            while 0 <= x < self.width and 0 <= y < self.height and self.board[y][x] != WALL:
+                targets.append((x, y))
+                x += dx
+                y += dy
+        return targets
+
+    def resolve_boss_laser(self) -> None:
+        if (self.player.x, self.player.y) in self.boss_laser_targets:
+            dmg = max(1, self.damage(14, self.player.defense))
+            self.player.hp -= dmg
+            self.log(f"The Great Boss's laser blasts you for {dmg} damage!")
+        else:
+            self.log("The Great Boss fires a devastating laser through the marked lines!")
 
     def advance_floor(self) -> None:
         self.floor += 1
