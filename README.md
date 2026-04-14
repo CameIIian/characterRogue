@@ -1,4 +1,4 @@
-# Roguelike_board_game
+# characterRogue
 
 CUIで遊べるシンプルな1人用ローグライクボードゲームです。
 
