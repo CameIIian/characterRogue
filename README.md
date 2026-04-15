@@ -84,6 +84,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 ### TO-DO list
+- AIのレートをすぐ使い切る原因の特定
+
 - f, qの削除
 - 2回連続で攻撃しないように修正
 - Bossのパターン調整
