@@ -55,10 +55,12 @@ class Game:
         self.rng = random.Random(seed)
         self.difficulty = difficulty
         self.enemy_power_multiplier = {
-            "Easy": 0.85,
+            "Easy": 0.5,
             "Normal": 1.0,
-            "Hard": 1.25,
+            "Hard": 1.5,
+            "Lunatic": 2.0,
         }.get(difficulty, 1.0)
+        self.enemy_attack_boost = 2.0
         self.floor = 1
         self.moves = 0
         self.message_log: deque[str] = deque(maxlen=7)
@@ -199,7 +201,11 @@ class Game:
         cycle = self.current_cycle()
         enemy_count = min(2 + self.floor + cycle, 12)
         enemy_hp = int((4 + (self.floor * 2) + (cycle * 4)) * self.enemy_power_multiplier)
-        enemy_atk = int((2 + (self.floor // 3) + (cycle * 2) + (self.floor // 2)) * self.enemy_power_multiplier)
+        enemy_atk = int(
+            (2 + (self.floor // 3) + (cycle * 2) + (self.floor // 2))
+            * self.enemy_power_multiplier
+            * self.enemy_attack_boost
+        )
         enemy_def = int(((self.floor // 4) + cycle) * self.enemy_power_multiplier)
         for _ in range(enemy_count):
             ex, ey = self.random_empty_tile()
@@ -220,7 +226,14 @@ class Game:
                     bx,
                     by,
                     hp=16 + (self.floor * 2) + (cycle * 6),
-                    atk=max(1, int((6 + (self.floor // 2) + (cycle * 2)) * self.enemy_power_multiplier)),
+                    atk=max(
+                        1,
+                        int(
+                            (6 + (self.floor // 2) + (cycle * 2))
+                            * self.enemy_power_multiplier
+                            * self.enemy_attack_boost
+                        ),
+                    ),
                     defense=max(0, int((3 + (self.floor // 4) + cycle) * self.enemy_power_multiplier)),
                     kind="miniboss",
                 )
@@ -233,7 +246,14 @@ class Game:
                     bx,
                     by,
                     hp=max(1, int((30 + (self.floor * 3) + (cycle * 8)) * self.enemy_power_multiplier)),
-                    atk=max(1, int((9 + (self.floor // 2) + (cycle * 3)) * self.enemy_power_multiplier)),
+                    atk=max(
+                        1,
+                        int(
+                            (9 + (self.floor // 2) + (cycle * 3))
+                            * self.enemy_power_multiplier
+                            * self.enemy_attack_boost
+                        ),
+                    ),
                     defense=max(0, int((5 + (self.floor // 4) + cycle) * self.enemy_power_multiplier)),
                     kind="boss",
                 )
@@ -766,7 +786,10 @@ class Game:
                     x,
                     y,
                     hp=14 + self.floor + (cycle * 3),
-                    atk=6 + (self.floor // 3) + cycle,
+                    atk=max(
+                        1,
+                        int((6 + (self.floor // 3) + cycle) * self.enemy_power_multiplier * self.enemy_attack_boost),
+                    ),
                     defense=3 + (self.floor // 5) + cycle,
                 )
             )
@@ -794,7 +817,9 @@ class Game:
 
     def resolve_boss_laser(self) -> None:
         if (self.player.x, self.player.y) in self.boss_laser_targets:
-            dmg = max(1, self.damage(14, self.player.defense))
+            boss = next((e for e in self.enemies if e.kind == "boss"), None)
+            base_atk = boss.atk if boss else 14
+            dmg = self.damage(base_atk * 3, self.player.defense)
             self.player.hp -= dmg
             self.log(f"The Great Boss's laser blasts you for {dmg} damage!")
         else:
@@ -886,8 +911,9 @@ def choose_difficulty() -> str:
     print("1) Easy")
     print("2) Normal")
     print("3) Hard")
-    choice = input("Choice [1-3]: ").strip()
-    return {"1": "Easy", "2": "Normal", "3": "Hard"}.get(choice, "Normal")
+    print("4) Lunatic")
+    choice = input("Choice [1-4]: ").strip()
+    return {"1": "Easy", "2": "Normal", "3": "Hard", "4": "Lunatic"}.get(choice, "Normal")
 
 
 def show_title_screen() -> Optional[str]:
