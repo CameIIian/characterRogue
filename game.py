@@ -568,7 +568,10 @@ class Game:
             self.log("Guard upgraded: DEF +2.")
         elif skill == "a":
             self.skill_tree["arcane"] += 1
-            spell = Spell(self.rng.choice(["Comet Missile", "Flare Curtain", "God's Wrath"]), self.roll_item_rarity())
+            spell = Spell(
+                self.rng.choice(["Comet Missile", "Flare Curtain", "God's Wrath", "Healing", "Vampire Kiss"]),
+                self.roll_item_rarity(),
+            )
             self.acquire_arcana(spell)
         else:
             self.log("Unknown skill.")
@@ -725,6 +728,10 @@ class Game:
             self.pending_chant_spell = spell
             self.log(f"You begin chanting {spell.rarity} God's Wrath...")
             return True
+        if spell.name == "Healing":
+            return self.cast_healing(spell)
+        if spell.name == "Vampire Kiss":
+            return self.cast_vampire_kiss(spell)
 
         self.log("Unknown spell.")
         return False
@@ -745,22 +752,48 @@ class Game:
             self.log(f"Not enough MP. Need {mp_cost} MP.")
             return False
 
-        for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+        targets = []
+        for dx, dy, dir_label, dir_key in [
+            (0, -1, "up", "w"),
+            (0, 1, "down", "s"),
+            (-1, 0, "left", "a"),
+            (1, 0, "right", "d"),
+        ]:
             x, y = self.player.x + dx, self.player.y + dy
             while 0 <= x < self.width and 0 <= y < self.height and self.board[y][x] != WALL:
                 enemy = self.get_enemy_at(x, y)
                 if enemy:
-                    self.player_mp -= mp_cost
-                    base = self.damage(self.player.atk, enemy.defense)
-                    dmg = max(1, int(base * self.spell_power_multiplier(spell.rarity)))
-                    self.apply_spell_damage(enemy, dmg, f"{spell.rarity} Comet Missile")
-                    self.log(f"MP -{mp_cost}.")
-                    return True
+                    targets.append((enemy, dir_label, dir_key))
+                    break
                 x += dx
                 y += dy
 
-        self.log("No enemy in a straight line for Comet Missile.")
-        return False
+        if not targets:
+            self.log("No enemy in a straight line for Comet Missile.")
+            return False
+
+        if len(targets) == 1:
+            target_enemy = targets[0][0]
+            direction_name = targets[0][1]
+        else:
+            self.log("Multiple targets detected for Comet Missile.")
+            direction = self.choose_direction("Cast direction [w/a/s/d, other=cancel]: ")
+            if direction is None:
+                return False
+            _, _, direction_name = direction
+            direction_key = {"up": "w", "down": "s", "left": "a", "right": "d"}[direction_name]
+            target_enemy = next((enemy for enemy, _, key in targets if key == direction_key), None)
+            if target_enemy is None:
+                self.log("No enemy in the selected direction for Comet Missile.")
+                return False
+
+        self.player_mp -= mp_cost
+        base = self.damage(self.player.atk, target_enemy.defense)
+        dmg = max(1, int(base * self.spell_power_multiplier(spell.rarity)))
+        self.apply_spell_damage(target_enemy, dmg, f"{spell.rarity} Comet Missile")
+        self.log(f"Comet Missile strikes {direction_name}.")
+        self.log(f"MP -{mp_cost}.")
+        return True
 
     def cast_flare_curtain(self, spell: Spell) -> bool:
         base_cost = 3
@@ -782,6 +815,75 @@ class Game:
             base = self.damage(self.player.atk, enemy.defense)
             dmg = max(1, int(base * self.spell_power_multiplier(spell.rarity)))
             self.apply_spell_damage(enemy, dmg, f"{spell.rarity} Flare Curtain")
+        self.log(f"MP -{mp_cost}.")
+        return True
+
+    def cast_healing(self, spell: Spell) -> bool:
+        base_cost = 2
+        mp_cost = base_cost + self.spell_mp_bonus(spell.rarity)
+        if self.player_mp < mp_cost:
+            self.log(f"Not enough MP. Need {mp_cost} MP.")
+            return False
+
+        healing_amount = {
+            "Common": 4,
+            "Uncommon": 8,
+            "Rare": 12,
+            "Epic": 18,
+            "Legendary": 80,
+        }.get(spell.rarity, 4)
+        hp_before = self.player.hp
+        self.player_mp -= mp_cost
+        self.player.hp = min(self.player_max_hp, self.player.hp + healing_amount)
+        healed = self.player.hp - hp_before
+        self.log(f"{spell.rarity} Healing restores {healed} HP.")
+        self.log(f"MP -{mp_cost}.")
+        return True
+
+    def cast_vampire_kiss(self, spell: Spell) -> bool:
+        base_cost = 3
+        mp_cost = base_cost + self.spell_mp_bonus(spell.rarity)
+        if self.player_mp < mp_cost:
+            self.log(f"Not enough MP. Need {mp_cost} MP.")
+            return False
+
+        targets = []
+        for dx, dy, dir_label, dir_key in [
+            (0, -1, "up", "w"),
+            (0, 1, "down", "s"),
+            (-1, 0, "left", "a"),
+            (1, 0, "right", "d"),
+        ]:
+            enemy = self.get_enemy_at(self.player.x + dx, self.player.y + dy)
+            if enemy:
+                targets.append((enemy, dir_label, dir_key))
+        if not targets:
+            self.log("No adjacent enemy for Vampire Kiss.")
+            return False
+
+        if len(targets) == 1:
+            target_enemy = targets[0][0]
+            direction_name = targets[0][1]
+        else:
+            self.log("Multiple adjacent targets detected for Vampire Kiss.")
+            direction = self.choose_direction("Cast direction [w/a/s/d, other=cancel]: ")
+            if direction is None:
+                return False
+            _, _, direction_name = direction
+            direction_key = {"up": "w", "down": "s", "left": "a", "right": "d"}[direction_name]
+            target_enemy = next((enemy for enemy, _, key in targets if key == direction_key), None)
+            if target_enemy is None:
+                self.log("No adjacent enemy in the selected direction for Vampire Kiss.")
+                return False
+
+        self.player_mp -= mp_cost
+        dmg = max(1, int((self.player.atk * (2 / 3)) * self.spell_power_multiplier(spell.rarity)))
+        hp_before = self.player.hp
+        self.apply_spell_damage(target_enemy, dmg, f"{spell.rarity} Vampire Kiss")
+        drain = max(1, dmg // 3)
+        self.player.hp = min(self.player_max_hp, self.player.hp + drain)
+        healed = self.player.hp - hp_before
+        self.log(f"Vampire Kiss strikes {direction_name} and drains {healed} HP.")
         self.log(f"MP -{mp_cost}.")
         return True
 
