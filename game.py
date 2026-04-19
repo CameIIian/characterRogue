@@ -67,7 +67,15 @@ class Game:
             "Legendary": 0.50,
         },
     }
-    ACCESSORY_KINDS = {"Lucky amulet", "Kote", "Vampire's Fang", "Dark Wizard's Staff", "Guardian's Armor"}
+    ACCESSORY_KINDS = {
+        "Lucky amulet",
+        "Kote",
+        "Vampire's Fang",
+        "Dark Wizard's Staff",
+        "Guardian's Armor",
+        "Berserker's club",
+        "Roller shoes",
+    }
     XP_MULTIPLIER_BY_RARITY = {
         "Common": 1.10,
         "Uncommon": 1.20,
@@ -96,12 +104,28 @@ class Game:
         "Epic": 1.50,
         "Legendary": 1.75,
     }
+    BERSERKER_ATK_MULTIPLIER_BY_RARITY = {
+        "Common": 1.20,
+        "Uncommon": 1.35,
+        "Rare": 1.50,
+        "Epic": 1.75,
+        "Legendary": 2.00,
+    }
+    ROLLER_SHOES_STEP_LIMIT_BY_RARITY = {
+        "Common": 2,
+        "Uncommon": 3,
+        "Rare": 5,
+        "Epic": 7,
+        "Legendary": 10,
+    }
     ACCESSORY_DESCRIPTIONS = {
         "Lucky amulet": "Boosts gained XP based on rarity.",
         "Kote": "Raises ATK and DEF while equipped.",
         "Vampire's Fang": "Converts overheal HP into MP.",
         "Dark Wizard's Staff": "Converts over-restored MP into HP.",
         "Guardian's Armor": "Waiting stacks DEF, while moving resets DEF to base.",
+        "Berserker's club": "Sets max MP to 0 while equipped and multiplies ATK by rarity.",
+        "Roller shoes": "Allows chaining up to N movement inputs in one turn based on rarity.",
     }
     ARCANA_DESCRIPTIONS = {
         "Comet Missile": "Fires a line attack at one directional target.",
@@ -142,6 +166,8 @@ class Game:
         self.player = Entity(0, 0, hp=10, atk=3, defense=1)
         self.guardian_armor_base_defense: Optional[int] = None
         self.guardian_armor_multiplier: float = 1.0
+        self.berserker_stored_max_mp: Optional[int] = None
+        self.berserker_stored_mp: Optional[int] = None
         self.player_max_hp = 10
         self.player_max_mp = 5
         self.player_mp = 5
@@ -220,7 +246,7 @@ class Game:
 
     def finalize_turn_capture(self, cmd: str) -> None:
         self._is_capturing_turn_events = False
-        if cmd in {"w", "a", "s", "d"} and not self._turn_event_buffer:
+        if cmd and all(ch in {"w", "a", "s", "d"} for ch in cmd) and not self._turn_event_buffer:
             return
         if not self._turn_event_buffer:
             return
@@ -455,6 +481,8 @@ class Game:
                 "Vampire's Fang",
                 "Dark Wizard's Staff",
                 "Guardian's Armor",
+                "Berserker's club",
+                "Roller shoes",
             ]
         )
 
@@ -555,6 +583,13 @@ class Game:
             self.guardian_armor_base_defense = max(0, self.player.defense)
             self.guardian_armor_multiplier = 1.0
             self.refresh_guardian_armor_defense()
+        elif kind == "Berserker's club":
+            self.berserker_stored_max_mp = self.player_max_mp
+            self.berserker_stored_mp = self.player_mp
+            self.player_max_mp = 0
+            self.player_mp = 0
+            multiplier = self.BERSERKER_ATK_MULTIPLIER_BY_RARITY.get(rarity, 1.20)
+            self.log(f"Berserker's club active: Max MP set to 0, ATK damage now x{multiplier:.2f}.")
 
     def remove_accessory_effect(self, rarity: str, kind: str) -> None:
         if kind == "Kote":
@@ -566,6 +601,13 @@ class Game:
                 self.player.defense = max(0, self.guardian_armor_base_defense)
             self.guardian_armor_base_defense = None
             self.guardian_armor_multiplier = 1.0
+        elif kind == "Berserker's club":
+            restored_max_mp = self.berserker_stored_max_mp if self.berserker_stored_max_mp is not None else 5
+            restored_mp = self.berserker_stored_mp if self.berserker_stored_mp is not None else 0
+            self.player_max_mp = max(0, restored_max_mp)
+            self.player_mp = min(self.player_max_mp, max(0, restored_mp))
+            self.berserker_stored_max_mp = None
+            self.berserker_stored_mp = None
 
     def equip_accessory(self, rarity: str, kind: str) -> None:
         if self.equipped_accessory is not None:
@@ -891,7 +933,14 @@ class Game:
         def_gain = self._stat_growth(0, 1)
 
         self.player_max_hp += hp_gain
-        self.player_max_mp += mp_gain
+        if self.equipped_accessory and self.equipped_accessory[1] == "Berserker's club":
+            if self.berserker_stored_max_mp is None:
+                self.berserker_stored_max_mp = self.player_max_mp
+            self.berserker_stored_max_mp += mp_gain
+            self.player_max_mp = 0
+            self.player_mp = 0
+        else:
+            self.player_max_mp += mp_gain
         self.player.atk += atk_gain
         self.add_player_defense(def_gain)
         self.player.hp = self.player_max_hp
@@ -975,19 +1024,22 @@ class Game:
         return self.use_skill_point(choice)
 
     def move_player(self, dx: int, dy: int) -> None:
+        self.move_player_step(dx, dy)
+
+    def move_player_step(self, dx: int, dy: int) -> str:
         nx, ny = self.player.x + dx, self.player.y + dy
         if not (0 <= nx < self.width and 0 <= ny < self.height):
             self.log("You bump into the edge.")
-            return
+            return "blocked"
 
         if self.board[ny][nx] == WALL:
             self.log("A wall blocks your path.")
-            return
+            return "blocked"
 
         enemy = self.get_enemy_at(nx, ny)
         if enemy:
             self.combat(enemy)
-            return
+            return "attacked"
 
         self.player.x, self.player.y = nx, ny
         self.pickup_item()
@@ -998,14 +1050,38 @@ class Game:
         if (nx, ny) == self.stairs:
             if self.is_miniboss_floor(self.floor) and self.miniboss_alive():
                 self.log("A mysterious seal blocks the stairs. Defeat the miniboss first.")
-                return
+                return "moved"
             if self.is_boss_floor(self.floor) and self.boss_alive():
                 self.log("A tyrant's seal blocks the stairs. Defeat the Great Boss first.")
-                return
+                return "moved"
             self.advance_floor()
+            return "advanced"
+        return "moved"
+
+    def execute_move_command(self, cmd: str) -> bool:
+        direction_map = {
+            "w": (0, -1),
+            "a": (-1, 0),
+            "s": (0, 1),
+            "d": (1, 0),
+        }
+        if any(ch not in direction_map for ch in cmd):
+            self.log("Invalid command.")
+            return False
+
+        step_limit = self.movement_step_limit()
+        steps = cmd[:step_limit]
+        for idx, ch in enumerate(steps):
+            dx, dy = direction_map[ch]
+            outcome = self.move_player_step(dx, dy)
+            if outcome in {"attacked", "blocked", "advanced"}:
+                if outcome == "attacked" and idx < len(steps) - 1:
+                    self.log("Movement stopped after attacking an enemy.")
+                break
+        return True
 
     def combat(self, enemy: Entity) -> None:
-        dmg = self.damage(self.player.atk, enemy.defense)
+        dmg = self.damage(self.player_attack_value(), enemy.defense)
         enemy.hp -= dmg
         self.log(f"You hit the enemy for {dmg} damage.")
 
@@ -1040,6 +1116,20 @@ class Game:
             "Epic": 2.25,
             "Legendary": 3.00,
         }.get(rarity, 1.0)
+
+    def player_attack_value(self) -> int:
+        attack = self.player.atk
+        if self.equipped_accessory and self.equipped_accessory[1] == "Berserker's club":
+            rarity = self.equipped_accessory[0]
+            multiplier = self.BERSERKER_ATK_MULTIPLIER_BY_RARITY.get(rarity, 1.20)
+            attack = max(1, int(attack * multiplier))
+        return max(1, attack)
+
+    def movement_step_limit(self) -> int:
+        if self.equipped_accessory and self.equipped_accessory[1] == "Roller shoes":
+            rarity = self.equipped_accessory[0]
+            return self.ROLLER_SHOES_STEP_LIMIT_BY_RARITY.get(rarity, 2)
+        return 1
 
     def spell_mp_bonus(self, rarity: str) -> int:
         return {
@@ -1179,7 +1269,7 @@ class Game:
                 return False
 
         self.player_mp -= mp_cost
-        base = self.damage(self.player.atk, target_enemy.defense)
+        base = self.damage(self.player_attack_value(), target_enemy.defense)
         dmg = max(1, int(base * self.spell_power_multiplier(spell.rarity)))
         self.apply_spell_damage(target_enemy, dmg, f"{spell.rarity} Comet Missile")
         self.log(f"Comet Missile strikes {direction_name}.")
@@ -1203,7 +1293,7 @@ class Game:
 
         self.player_mp -= mp_cost
         for enemy in list(targets):
-            base = self.damage(self.player.atk, enemy.defense)
+            base = self.damage(self.player_attack_value(), enemy.defense)
             dmg = max(1, int(base * self.spell_power_multiplier(spell.rarity)))
             self.apply_spell_damage(enemy, dmg, f"{spell.rarity} Flare Curtain")
         self.log(f"MP -{mp_cost}.")
@@ -1266,7 +1356,7 @@ class Game:
                 return False
 
         self.player_mp -= mp_cost
-        dmg = max(1, int((self.player.atk * (2 / 3)) * self.spell_power_multiplier(spell.rarity)))
+        dmg = max(1, int((self.player_attack_value() * (2 / 3)) * self.spell_power_multiplier(spell.rarity)))
         self.apply_spell_damage(target_enemy, dmg, f"{spell.rarity} Vampire Kiss")
         drain = max(1, dmg // 3)
         healed, _ = self.restore_hp(drain)
@@ -1296,7 +1386,7 @@ class Game:
 
         target = max(self.enemies, key=lambda e: (e.hp, -abs(e.x - self.player.x) - abs(e.y - self.player.y)))
         self.player_mp -= mp_cost
-        base = self.damage(self.player.atk, target.defense)
+        base = self.damage(self.player_attack_value(), target.defense)
         dmg = max(1, int(base * 1.5 * self.spell_power_multiplier(spell.rarity)))
         self.apply_spell_damage(target, dmg, f"{spell.rarity} God's Wrath")
         self.log(f"MP -{mp_cost}.")
@@ -1509,25 +1599,12 @@ class Game:
 
     def take_turn(self, cmd: str) -> bool:
         acted = False
-        acting_commands = {"w", "a", "s", "d", ".", "t", "u"}
-        if cmd in acting_commands:
+        move_input = bool(cmd) and all(ch in {"w", "a", "s", "d"} for ch in cmd)
+        if move_input or cmd in {".", "t", "u"}:
             self.start_turn_capture()
-        if cmd == "w":
+        if move_input:
             self.reset_guardian_armor_defense()
-            self.move_player(0, -1)
-            acted = True
-        elif cmd == "s":
-            self.reset_guardian_armor_defense()
-            self.move_player(0, 1)
-            acted = True
-        elif cmd == "a":
-            self.reset_guardian_armor_defense()
-            self.move_player(-1, 0)
-            acted = True
-        elif cmd == "d":
-            self.reset_guardian_armor_defense()
-            self.move_player(1, 0)
-            acted = True
+            acted = self.execute_move_command(cmd)
         elif cmd == ".":
             self.log("You wait.")
             self.stack_guardian_armor_defense()
@@ -1638,7 +1715,7 @@ def main() -> None:
         if game.player.hp <= 0:
             show_game_over_screen(game)
             break
-        cmd = input("Command [w/a/s/d, t, ., i, u, k, h, l, p]: ").strip().lower()[:1]
+        cmd = input("Command [w/a/s/d chain, t, ., i, u, k, h, l, p]: ").strip().lower()
         if not cmd:
             continue
         game.take_turn(cmd)
