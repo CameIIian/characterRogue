@@ -46,6 +46,7 @@ class Spell:
 class FriendlyEntity:
     x: int
     y: int
+    role: str = "merchant"
     traded: bool = False
 
 
@@ -101,6 +102,7 @@ class Game:
         self.skill_points = 0
         self.spells: List[Spell] = []
         self.pending_chant_spell: Optional[Spell] = None
+        self.next_floor_destination: Optional[int] = None
 
         self.skill_tree = {
             "vitality": 0,
@@ -297,8 +299,12 @@ class Game:
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
             self.items.append(ItemEntity(ix, iy, self.rng.choice(item_pool), self.roll_item_rarity()))
-        fx, fy = self.random_empty_tile()
-        self.friendlies.append(FriendlyEntity(fx, fy))
+        merchant_x, merchant_y = self.random_empty_tile()
+        self.friendlies.append(FriendlyEntity(merchant_x, merchant_y, role="merchant"))
+        technician_x, technician_y = self.random_empty_tile()
+        self.friendlies.append(FriendlyEntity(technician_x, technician_y, role="technician"))
+        traveler_x, traveler_y = self.random_empty_tile()
+        self.friendlies.append(FriendlyEntity(traveler_x, traveler_y, role="maze traveler"))
 
     def random_floor_only(self, exclude: Optional[set] = None) -> Tuple[int, int]:
         exclude = exclude or set()
@@ -404,12 +410,32 @@ class Game:
                 return rarity
         return "Rare"
 
+    def random_arcana(self) -> Spell:
+        return Spell(
+            self.rng.choice(
+                ["Comet Missile", "Flare Curtain", "God's Wrath", "Healing", "Vampire Kiss", "Frugal soul"]
+            ),
+            self.roll_item_rarity(),
+        )
+
     def trade_with_friendly(self, friendly: FriendlyEntity) -> None:
+        if friendly.role == "merchant":
+            self.trade_with_merchant(friendly)
+            return
+        if friendly.role == "technician":
+            self.trade_with_technician(friendly)
+            return
+        if friendly.role == "maze traveler":
+            self.trade_with_maze_traveler(friendly)
+            return
+        self.log("The traveler does not respond.")
+
+    def trade_with_merchant(self, friendly: FriendlyEntity) -> None:
         if friendly.traded:
-            self.log("This friendly traveler has already traded with you.")
+            self.log("Merchant: We've already traded on this floor.")
             return
         if not self.inventory:
-            self.log("Friendly trader: Bring me an item and we can trade.")
+            self.log("Merchant: Bring me an item and we can trade.")
             return
         item_index = self.choose_inventory_index()
         if item_index is None:
@@ -421,7 +447,35 @@ class Game:
         new_rarity = self.roll_trade_rarity()
         self.inventory.append((new_rarity, new_kind))
         friendly.traded = True
-        self.log(f"You traded {offered_rarity} {offered_kind} and received {new_rarity} {new_kind}.")
+        self.log(f"Merchant trade: {offered_rarity} {offered_kind} -> {new_rarity} {new_kind}.")
+
+    def trade_with_technician(self, friendly: FriendlyEntity) -> None:
+        if friendly.traded:
+            self.log("Technician: I already calibrated your gear on this floor.")
+            return
+        if not self.inventory:
+            self.log("Technician: Bring any item and I'll convert it into Arcana data.")
+            return
+        item_index = self.choose_inventory_index()
+        if item_index is None:
+            return
+
+        offered_rarity, offered_kind = self.inventory.pop(item_index)
+        new_spell = self.random_arcana()
+        self.log(f"Technician trade: {offered_rarity} {offered_kind} -> {new_spell.rarity} {new_spell.name} Arcana.")
+        self.acquire_arcana(new_spell)
+        friendly.traded = True
+
+    def trade_with_maze_traveler(self, friendly: FriendlyEntity) -> None:
+        if friendly.traded:
+            self.log("Maze traveler: My route advice was already given.")
+            return
+        doubled_floor = max(1, self.floor * 2)
+        halved_floor = max(1, self.floor // 2)
+        destination = self.rng.choice([doubled_floor, halved_floor])
+        self.next_floor_destination = destination
+        friendly.traded = True
+        self.log(f"Maze traveler marks your map. Next stairs will send you to floor {destination}.")
 
     def maybe_grant_floor_clear_bonus(self) -> None:
         if self.floor_clear_bonus_granted or self.enemies:
@@ -1182,8 +1236,14 @@ class Game:
 
     def advance_floor(self) -> None:
         previous_cycle = self.current_cycle()
-        self.floor += 1
-        self.log(f"You descend to floor {self.floor}.")
+        if self.next_floor_destination is not None:
+            destination = max(1, self.next_floor_destination)
+            self.next_floor_destination = None
+            self.floor = destination
+            self.log(f"You take warped stairs to floor {self.floor}.")
+        else:
+            self.floor += 1
+            self.log(f"You descend to floor {self.floor}.")
         if self.current_cycle() > previous_cycle:
             self.log("A new loop begins: enemies are empowered and the map grows wider.")
         self.generate_floor()
