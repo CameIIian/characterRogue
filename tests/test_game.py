@@ -314,6 +314,46 @@ class GameTests(unittest.TestCase):
         self.assertEqual(g.player.hp, 22)
         self.assertEqual(g.player_mp, 7)
 
+    def test_vampires_fang_converts_hp_overflow_to_mp(self):
+        g = Game(seed=1)
+        g.player_max_hp = 20
+        g.player.hp = 19
+        g.player_max_mp = 20
+        g.player_mp = 1
+        g.equipped_accessory = ("Epic", "Vampire's Fang")
+
+        healed, converted_mp = g.restore_hp(10)
+
+        self.assertEqual(healed, 1)
+        self.assertEqual(converted_mp, 7)
+        self.assertEqual(g.player.hp, 20)
+        self.assertEqual(g.player_mp, 8)
+
+    def test_dark_wizards_staff_converts_mp_overflow_to_hp(self):
+        g = Game(seed=1)
+        g.player_max_mp = 10
+        g.player_mp = 9
+        g.player_max_hp = 30
+        g.player.hp = 1
+        g.equipped_accessory = ("Rare", "Dark Wizard's Staff")
+
+        restored, converted_hp = g.restore_mp(10)
+
+        self.assertEqual(restored, 1)
+        self.assertEqual(converted_hp, 5)
+        self.assertEqual(g.player_mp, 10)
+        self.assertEqual(g.player.hp, 6)
+
+    def test_overflow_conversion_ratio_scales_with_rarity(self):
+        g = Game(seed=1)
+        self.assertEqual(g.accessory_overflow_ratio("Vampire's Fang", "Common"), 0.20)
+        self.assertEqual(g.accessory_overflow_ratio("Vampire's Fang", "Uncommon"), 0.40)
+        self.assertEqual(g.accessory_overflow_ratio("Vampire's Fang", "Rare"), 0.60)
+        self.assertEqual(g.accessory_overflow_ratio("Vampire's Fang", "Epic"), 0.80)
+        self.assertEqual(g.accessory_overflow_ratio("Vampire's Fang", "Legendary"), 1.00)
+        self.assertEqual(g.accessory_overflow_ratio("Dark Wizard's Staff", "Common"), 0.20)
+        self.assertEqual(g.accessory_overflow_ratio("Dark Wizard's Staff", "Legendary"), 1.00)
+
     def test_vampire_kiss_uses_rarity_damage_and_drains_hp(self):
         g = Game(seed=1, width=7, height=7)
         g.board = [[WALL for _ in range(7)] for _ in range(7)]

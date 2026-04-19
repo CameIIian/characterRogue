@@ -67,7 +67,7 @@ class Game:
             "Legendary": 0.50,
         },
     }
-    ACCESSORY_KINDS = {"Lucky amulet", "Kote"}
+    ACCESSORY_KINDS = {"Lucky amulet", "Kote", "Vampire's Fang", "Dark Wizard's Staff"}
     XP_MULTIPLIER_BY_RARITY = {
         "Common": 1.10,
         "Uncommon": 1.20,
@@ -81,6 +81,13 @@ class Game:
         "Rare": (3, 3),
         "Epic": (5, 5),
         "Legendary": (8, 8),
+    }
+    OVERFLOW_CONVERSION_BY_RARITY = {
+        "Common": 0.20,
+        "Uncommon": 0.40,
+        "Rare": 0.60,
+        "Epic": 0.80,
+        "Legendary": 1.00,
     }
 
     def __init__(
@@ -411,7 +418,73 @@ class Game:
 
 
     def random_item_kind(self) -> str:
-        return self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb", "Lucky amulet", "Kote"])
+        return self.rng.choice(
+            [
+                "Potion",
+                "Power",
+                "Shield",
+                "Ether",
+                "Throwing axe",
+                "Bomb",
+                "Lucky amulet",
+                "Kote",
+                "Vampire's Fang",
+                "Dark Wizard's Staff",
+            ]
+        )
+
+    def accessory_overflow_ratio(self, accessory_kind: str, rarity: str) -> float:
+        if accessory_kind not in {"Vampire's Fang", "Dark Wizard's Staff"}:
+            return 0.0
+        return self.OVERFLOW_CONVERSION_BY_RARITY.get(rarity, 0.20)
+
+    def restore_hp(self, amount: int) -> Tuple[int, int]:
+        hp_before = self.player.hp
+        self.player.hp = min(self.player_max_hp, self.player.hp + amount)
+        healed = self.player.hp - hp_before
+        overflow = max(0, amount - healed)
+        converted_mp = 0
+        if (
+            overflow > 0
+            and self.equipped_accessory is not None
+            and self.equipped_accessory[1] == "Vampire's Fang"
+        ):
+            rarity, kind = self.equipped_accessory
+            ratio = self.accessory_overflow_ratio(kind, rarity)
+            mp_gain = int(overflow * ratio)
+            if mp_gain > 0:
+                mp_before = self.player_mp
+                self.player_mp = min(self.player_max_mp, self.player_mp + mp_gain)
+                converted_mp = self.player_mp - mp_before
+                if converted_mp > 0:
+                    self.log(
+                        f"{rarity} Vampire's Fang converted {overflow} overflow HP into {converted_mp} MP."
+                    )
+        return healed, converted_mp
+
+    def restore_mp(self, amount: int) -> Tuple[int, int]:
+        mp_before = self.player_mp
+        self.player_mp = min(self.player_max_mp, self.player_mp + amount)
+        restored = self.player_mp - mp_before
+        overflow = max(0, amount - restored)
+        converted_hp = 0
+        if (
+            overflow > 0
+            and self.equipped_accessory is not None
+            and self.equipped_accessory[1] == "Dark Wizard's Staff"
+        ):
+            rarity, kind = self.equipped_accessory
+            ratio = self.accessory_overflow_ratio(kind, rarity)
+            hp_gain = int(overflow * ratio)
+            if hp_gain > 0:
+                hp_before = self.player.hp
+                self.player.hp = min(self.player_max_hp, self.player.hp + hp_gain)
+                converted_hp = self.player.hp - hp_before
+                if converted_hp > 0:
+                    self.log(
+                        f"{rarity} Dark Wizard's Staff converted {overflow} overflow MP into {converted_hp} HP."
+                    )
+        return restored, converted_hp
 
     def apply_accessory_effect(self, rarity: str, kind: str) -> None:
         if kind == "Kote":
@@ -661,8 +734,8 @@ class Game:
         if kind == "Potion":
             ratio, minimum = potion_scaling.get(rarity, (0.20, 5))
             restore = max(minimum, int(self.player_max_hp * ratio))
-            self.player.hp = min(self.player_max_hp, self.player.hp + restore)
-            self.log(f"You used {rarity} Potion and restored {restore} HP.")
+            healed, _ = self.restore_hp(restore)
+            self.log(f"You used {rarity} Potion and restored {healed} HP.")
         elif kind == "Power":
             gain = power_shield_gain.get(rarity, 1)
             self.player.atk += gain
@@ -674,8 +747,8 @@ class Game:
         elif kind == "Ether":
             ratio, minimum = ether_scaling.get(rarity, (0.20, 3))
             restore = max(minimum, int(self.player_max_mp * ratio))
-            self.player_mp = min(self.player_max_mp, self.player_mp + restore)
-            self.log(f"You used {rarity} Ether and restored {restore} MP.")
+            restored, _ = self.restore_mp(restore)
+            self.log(f"You used {rarity} Ether and restored {restored} MP.")
         elif kind in self.ACCESSORY_KINDS:
             self.equip_accessory(rarity, kind)
         elif kind == "Throwing axe":
@@ -1081,10 +1154,8 @@ class Game:
             "Epic": 18,
             "Legendary": 80,
         }.get(spell.rarity, 4)
-        hp_before = self.player.hp
         self.player_mp -= mp_cost
-        self.player.hp = min(self.player_max_hp, self.player.hp + healing_amount)
-        healed = self.player.hp - hp_before
+        healed, _ = self.restore_hp(healing_amount)
         self.log(f"{spell.rarity} Healing restores {healed} HP.")
         self.log(f"MP -{mp_cost}.")
         return True
@@ -1127,11 +1198,9 @@ class Game:
 
         self.player_mp -= mp_cost
         dmg = max(1, int((self.player.atk * (2 / 3)) * self.spell_power_multiplier(spell.rarity)))
-        hp_before = self.player.hp
         self.apply_spell_damage(target_enemy, dmg, f"{spell.rarity} Vampire Kiss")
         drain = max(1, dmg // 3)
-        self.player.hp = min(self.player_max_hp, self.player.hp + drain)
-        healed = self.player.hp - hp_before
+        healed, _ = self.restore_hp(drain)
         self.log(f"Vampire Kiss strikes {direction_name} and drains {healed} HP.")
         self.log(f"MP -{mp_cost}.")
         return True
