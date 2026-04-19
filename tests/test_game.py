@@ -223,6 +223,45 @@ class GameTests(unittest.TestCase):
         self.assertEqual(len(g.friendlies), 3)
         self.assertEqual(roles, ["maze traveler", "merchant", "technician"])
 
+    def test_turn_log_skips_move_only_turn(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.enemies = []
+        g.items = []
+        g.friendlies = []
+
+        g.take_turn("d")
+
+        self.assertEqual(len(g.turn_logs), 0)
+
+    def test_turn_log_collects_non_move_events(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.enemies = [Entity(3, 2, hp=2, atk=1, defense=0)]
+        g.items = []
+        g.friendlies = []
+
+        g.take_turn("d")
+
+        self.assertEqual(len(g.turn_logs), 1)
+        self.assertIn("You hit the enemy", g.turn_logs[-1])
+
+    def test_turn_log_keeps_latest_ten_entries(self):
+        g = Game(seed=1)
+
+        for _ in range(11):
+            g.take_turn(".")
+
+        self.assertEqual(len(g.turn_logs), 10)
+
     def test_comet_missile_hits_straight_line_enemy(self):
         g = Game(seed=1, width=7, height=7)
         g.board = [[WALL for _ in range(7)] for _ in range(7)]
