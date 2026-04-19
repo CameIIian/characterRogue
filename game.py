@@ -145,6 +145,14 @@ class Game:
         "Frugal soul": "Your next item may be preserved instead of consumed.",
     }
 
+
+    FRIENDLY_ROLE_SPAWN_WEIGHTS = {
+        "merchant": 10,
+        "technician": 10,
+        "maze traveler": 2,
+        "friendly demon": 2,
+    }
+
     def __init__(
         self,
         width: int = 10,
@@ -188,6 +196,8 @@ class Game:
         self.spells: List[Spell] = []
         self.pending_chant_spell: Optional[Spell] = None
         self.next_floor_destination: Optional[int] = None
+        self.friendly_spawn_cycle_index = self.current_cycle()
+        self.spawned_friendly_roles_in_cycle: set[str] = set()
 
         self.skill_tree = {
             "vitality": 0,
@@ -405,12 +415,7 @@ class Game:
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
             self.items.append(ItemEntity(ix, iy, self.random_item_kind(), self.roll_item_rarity()))
-        merchant_x, merchant_y = self.random_empty_tile()
-        self.friendlies.append(FriendlyEntity(merchant_x, merchant_y, role="merchant"))
-        technician_x, technician_y = self.random_empty_tile()
-        self.friendlies.append(FriendlyEntity(technician_x, technician_y, role="technician"))
-        traveler_x, traveler_y = self.random_empty_tile()
-        self.friendlies.append(FriendlyEntity(traveler_x, traveler_y, role="maze traveler"))
+        self.maybe_spawn_friendly()
 
     def random_floor_only(self, exclude: Optional[set] = None) -> Tuple[int, int]:
         exclude = exclude or set()
@@ -665,6 +670,39 @@ class Game:
                 return friendly
         return None
 
+    def refresh_friendly_spawn_cycle(self) -> None:
+        current_cycle = self.current_cycle()
+        if self.friendly_spawn_cycle_index != current_cycle:
+            self.friendly_spawn_cycle_index = current_cycle
+            self.spawned_friendly_roles_in_cycle = set()
+
+    def maybe_spawn_friendly(self) -> None:
+        self.refresh_friendly_spawn_cycle()
+
+        available_roles = [
+            role
+            for role in self.FRIENDLY_ROLE_SPAWN_WEIGHTS
+            if role not in self.spawned_friendly_roles_in_cycle
+        ]
+        if not available_roles:
+            return
+
+        spawn_roll = self.rng.randint(1, 100)
+        cumulative = 0
+        selected_role: Optional[str] = None
+        for role in available_roles:
+            cumulative += self.FRIENDLY_ROLE_SPAWN_WEIGHTS[role]
+            if spawn_roll <= cumulative:
+                selected_role = role
+                break
+
+        if selected_role is None:
+            return
+
+        fx, fy = self.random_empty_tile()
+        self.friendlies.append(FriendlyEntity(fx, fy, role=selected_role))
+        self.spawned_friendly_roles_in_cycle.add(selected_role)
+
     def roll_trade_rarity(self) -> str:
         trade_tiers = [("Common", 25), ("Uncommon", 20), ("Rare", 32), ("Epic", 18), ("Legendary", 5)]
         total_weight = sum(weight for _, weight in trade_tiers)
@@ -693,6 +731,9 @@ class Game:
             return
         if friendly.role == "maze traveler":
             self.trade_with_maze_traveler(friendly)
+            return
+        if friendly.role == "friendly demon":
+            self.trade_with_friendly_demon(friendly)
             return
         self.log("The traveler does not respond.")
 
@@ -741,6 +782,45 @@ class Game:
         self.next_floor_destination = destination
         friendly.traded = True
         self.log(f"Maze traveler marks your map. Next stairs will send you to floor {destination}.")
+
+    def trade_with_friendly_demon(self, friendly: FriendlyEntity) -> None:
+        if friendly.traded:
+            self.log("Friendly demon: We already made our pact on this floor.")
+            return
+        if self.player.hp <= 1:
+            self.log("Friendly demon: Return when you have more than 1 HP to offer.")
+            return
+
+        offered_text = input(
+            f"Friendly demon pact - offer HP [1-{self.player.hp - 1}, other=cancel]: "
+        ).strip()
+        if not offered_text.isdigit():
+            self.log("Friendly demon pact cancelled.")
+            return
+
+        offered_hp = int(offered_text)
+        if offered_hp < 1 or offered_hp >= self.player.hp:
+            self.log("Friendly demon: Offer must leave you with at least 1 HP.")
+            return
+
+        atk_text = input(f"Allocate to ATK [0-{offered_hp}]: ").strip()
+        if not atk_text.isdigit():
+            self.log("Friendly demon pact cancelled.")
+            return
+
+        atk_gain = int(atk_text)
+        if atk_gain < 0 or atk_gain > offered_hp:
+            self.log("Friendly demon: Invalid ATK allocation.")
+            return
+
+        def_gain = offered_hp - atk_gain
+        self.player.hp -= offered_hp
+        self.player.atk += atk_gain
+        self.player.defense += def_gain
+        friendly.traded = True
+        self.log(
+            f"Friendly demon pact complete: HP -{offered_hp}, ATK +{atk_gain}, DEF +{def_gain}."
+        )
 
     def maybe_grant_floor_clear_bonus(self) -> None:
         if self.floor_clear_bonus_granted or self.enemies:
