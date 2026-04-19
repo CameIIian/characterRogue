@@ -897,6 +897,69 @@ class GameTests(unittest.TestCase):
         self.assertEqual(g.floor, 11)
         self.assertEqual(g.width, 12)
 
+    def test_berserkers_club_sets_mp_zero_and_boosts_attack_by_rarity(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 10
+        g.player_max_mp = 12
+        g.player_mp = 7
+        g.inventory = [("Rare", "Berserker's club")]
+        enemy = Entity(3, 2, hp=20, atk=1, defense=0)
+        g.enemies = [enemy]
+
+        g.use_item()
+
+        self.assertEqual(g.player_max_mp, 0)
+        self.assertEqual(g.player_mp, 0)
+        g.take_turn("d")
+        self.assertEqual(enemy.hp, 5)
+
+    def test_removing_berserkers_club_restores_mp_pool(self):
+        g = Game(seed=1)
+        g.player_max_mp = 8
+        g.player_mp = 6
+
+        g.equip_accessory("Common", "Berserker's club")
+        g.equip_accessory("Common", "Lucky amulet")
+
+        self.assertEqual(g.player_max_mp, 8)
+        self.assertEqual(g.player_mp, 6)
+        self.assertEqual(g.equipped_accessory, ("Common", "Lucky amulet"))
+
+    def test_roller_shoes_can_chain_two_steps(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.equip_accessory("Common", "Roller shoes")
+
+        g.take_turn("dd")
+
+        self.assertEqual((g.player.x, g.player.y), (4, 2))
+
+    def test_roller_shoes_stops_after_first_attack_in_chain(self):
+        g = Game(seed=1, width=8, height=8)
+        g.board = [[WALL for _ in range(8)] for _ in range(8)]
+        for y in range(1, 7):
+            for x in range(1, 7):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 3
+        g.equip_accessory("Legendary", "Roller shoes")
+        enemy = Entity(3, 3, hp=2, atk=1, defense=0)
+        g.enemies = [enemy]
+
+        g.take_turn("ds")
+
+        self.assertEqual((g.player.x, g.player.y), (3, 2))
+        self.assertEqual(len(g.enemies), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
