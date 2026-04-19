@@ -569,14 +569,36 @@ class Game:
         elif skill == "a":
             self.skill_tree["arcane"] += 1
             spell = Spell(self.rng.choice(["Comet Missile", "Flare Curtain", "God's Wrath"]), self.roll_item_rarity())
-            self.spells.append(spell)
-            self.log(f"Arcane upgraded: Learned {spell.rarity} {spell.name}.")
+            self.acquire_arcana(spell)
         else:
             self.log("Unknown skill.")
             return False
 
         self.skill_points -= 1
         return True
+
+    def acquire_arcana(self, spell: Spell) -> None:
+        if not self.spells:
+            self.spells.append(spell)
+            self.log(f"Arcane upgraded: Learned {spell.rarity} {spell.name}.")
+            return
+
+        current_spell = self.spells[0]
+        self.log(
+            "You can only hold 1 Arcana. Choose: "
+            "1=Keep current, discard new / 2=Take new, remove current."
+        )
+        choice = input("Arcana choice [1/2, other=1]: ").strip()
+        if choice == "2":
+            self.spells = [spell]
+            self.pending_chant_spell = None
+            self.log(
+                f"Arcana replaced: {current_spell.rarity} {current_spell.name} -> "
+                f"{spell.rarity} {spell.name}."
+            )
+            return
+
+        self.log(f"Kept {current_spell.rarity} {current_spell.name}. Discarded {spell.rarity} {spell.name}.")
 
     def open_skill_menu(self) -> bool:
         if self.skill_points <= 0:

@@ -155,6 +155,30 @@ class GameTests(unittest.TestCase):
         self.assertEqual(len(g.spells), 1)
         self.assertEqual(g.spells[0].name, "Comet Missile")
 
+    def test_arcane_upgrade_can_keep_existing_and_discard_new(self):
+        g = Game(seed=1)
+        g.skill_points = 1
+        g.spells = [Spell("Flare Curtain", "Rare")]
+
+        with patch.object(g.rng, "choice", return_value="Comet Missile"), patch("builtins.input", return_value="1"):
+            upgraded = g.use_skill_point("a")
+
+        self.assertTrue(upgraded)
+        self.assertEqual(len(g.spells), 1)
+        self.assertEqual(g.spells[0].name, "Flare Curtain")
+
+    def test_arcane_upgrade_can_replace_existing_with_new(self):
+        g = Game(seed=1)
+        g.skill_points = 1
+        g.spells = [Spell("Flare Curtain", "Rare")]
+
+        with patch.object(g.rng, "choice", return_value="Comet Missile"), patch("builtins.input", return_value="2"):
+            upgraded = g.use_skill_point("a")
+
+        self.assertTrue(upgraded)
+        self.assertEqual(len(g.spells), 1)
+        self.assertEqual(g.spells[0].name, "Comet Missile")
+
     def test_render_uses_miniboss_and_boss_icons(self):
         g = Game(seed=1)
         g.board = [[WALL for _ in range(5)] for _ in range(5)]
@@ -306,7 +330,7 @@ class GameTests(unittest.TestCase):
         g.player.atk = 7
         g.player.defense = 5
         g.skill_tree["arcane"] = 2
-        g.spells = [Spell("Comet Missile", "Rare"), Spell("Flare Curtain", "Legendary")]
+        g.spells = [Spell("Flare Curtain", "Legendary")]
 
         score = g.calculate_score()
 
