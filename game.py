@@ -75,6 +75,7 @@ class Game:
         "Guardian's Armor",
         "Berserker's club",
         "Roller shoes",
+        "Gunpowder box",
     }
     XP_MULTIPLIER_BY_RARITY = {
         "Common": 1.10,
@@ -118,6 +119,13 @@ class Game:
         "Epic": 7,
         "Legendary": 10,
     }
+    GUNPOWDER_BOX_RATIO_BY_RARITY = {
+        "Common": 0.50,
+        "Uncommon": 0.75,
+        "Rare": 1.00,
+        "Epic": 1.25,
+        "Legendary": 1.75,
+    }
     ACCESSORY_DESCRIPTIONS = {
         "Lucky amulet": "Boosts gained XP based on rarity.",
         "Kote": "Raises ATK and DEF while equipped.",
@@ -126,6 +134,7 @@ class Game:
         "Guardian's Armor": "Waiting stacks DEF, while moving resets DEF to base.",
         "Berserker's club": "Sets max MP to 0 while equipped and multiplies ATK by rarity.",
         "Roller shoes": "Allows chaining up to N movement inputs in one turn based on rarity.",
+        "Gunpowder box": "On attack/arcana kill, spreads overflow damage to adjacent enemies and can chain.",
     }
     ARCANA_DESCRIPTIONS = {
         "Comet Missile": "Fires a line attack at one directional target.",
@@ -483,6 +492,7 @@ class Game:
                 "Guardian's Armor",
                 "Berserker's club",
                 "Roller shoes",
+                "Gunpowder box",
             ]
         )
 
@@ -1082,31 +1092,9 @@ class Game:
 
     def combat(self, enemy: Entity) -> None:
         dmg = self.damage(self.player_attack_value(), enemy.defense)
-        enemy.hp -= dmg
         self.log(f"You hit the enemy for {dmg} damage.")
-
-        if enemy.hp <= 0:
-            defeat_x, defeat_y = enemy.x, enemy.y
-            self.enemies.remove(enemy)
-            if enemy.kind == "miniboss":
-                self.log("Miniboss defeated! The stairs are now unsealed.")
-                chest_kind = self.random_item_kind()
-                self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, self.roll_high_rarity()))
-                self.log("A treasure chest drops a high-rarity item.")
-                xp_gain = 12 + self.floor
-            elif enemy.kind == "boss":
-                self.log("Great Boss defeated! The stairs are now unsealed.")
-                chest_kind = self.random_item_kind()
-                self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, "Legendary"))
-                self.log("A legendary treasure chest drops where the boss fell.")
-                self.boss_laser_targets = []
-                xp_gain = 24 + self.floor
-            else:
-                self.log("Enemy defeated.")
-                xp_gain = 3 + self.floor
-            self.gain_xp(xp_gain)
-            self.maybe_grant_floor_clear_bonus()
-            return
+        self.apply_damage_with_chain(enemy, dmg, allow_gunpowder=True)
+        return
 
     def spell_power_multiplier(self, rarity: str) -> float:
         return {
@@ -1189,14 +1177,76 @@ class Game:
         return False
 
     def apply_spell_damage(self, enemy: Entity, dmg: int, spell_label: str) -> None:
-        enemy.hp -= dmg
         self.log(f"{spell_label} deals {dmg} damage.")
-        if enemy.hp <= 0:
-            self.enemies.remove(enemy)
-            self.log("Enemy defeated by magic.")
+        self.apply_damage_with_chain(enemy, dmg, allow_gunpowder=True, defeat_log="Enemy defeated by magic.")
+
+    def gunpowder_box_ratio(self) -> float:
+        if not self.equipped_accessory or self.equipped_accessory[1] != "Gunpowder box":
+            return 0.0
+        rarity = self.equipped_accessory[0]
+        return self.GUNPOWDER_BOX_RATIO_BY_RARITY.get(rarity, 0.50)
+
+    def adjacent_enemies(self, x: int, y: int) -> List[Entity]:
+        adjacent: List[Entity] = []
+        for enemy in self.enemies:
+            if abs(enemy.x - x) <= 1 and abs(enemy.y - y) <= 1 and not (enemy.x == x and enemy.y == y):
+                adjacent.append(enemy)
+        return adjacent
+
+    def handle_enemy_defeat(self, enemy: Entity, defeat_log: Optional[str] = None) -> None:
+        defeat_x, defeat_y = enemy.x, enemy.y
+        self.enemies.remove(enemy)
+        if enemy.kind == "miniboss":
+            self.log("Miniboss defeated! The stairs are now unsealed.")
+            chest_kind = self.random_item_kind()
+            self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, self.roll_high_rarity()))
+            self.log("A treasure chest drops a high-rarity item.")
+            xp_gain = 12 + self.floor
+        elif enemy.kind == "boss":
+            self.log("Great Boss defeated! The stairs are now unsealed.")
+            chest_kind = self.random_item_kind()
+            self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, "Legendary"))
+            self.log("A legendary treasure chest drops where the boss fell.")
+            self.boss_laser_targets = []
+            xp_gain = 24 + self.floor
+        else:
+            self.log(defeat_log or "Enemy defeated.")
             xp_gain = 3 + self.floor
-            self.gain_xp(xp_gain)
-            self.maybe_grant_floor_clear_bonus()
+        self.gain_xp(xp_gain)
+        self.maybe_grant_floor_clear_bonus()
+
+    def apply_damage_with_chain(
+        self,
+        enemy: Entity,
+        dmg: int,
+        allow_gunpowder: bool = False,
+        defeat_log: Optional[str] = None,
+    ) -> None:
+        if enemy not in self.enemies:
+            return
+
+        hp_before = enemy.hp
+        enemy.hp -= dmg
+        if enemy.hp > 0:
+            return
+
+        overflow = max(0, dmg - hp_before)
+        self.handle_enemy_defeat(enemy, defeat_log=defeat_log)
+        if not allow_gunpowder:
+            return
+
+        ratio = self.gunpowder_box_ratio()
+        if ratio <= 0 or overflow <= 0:
+            return
+
+        splash_damage = int(overflow * ratio)
+        if splash_damage <= 0:
+            return
+        self.log(f"Gunpowder box triggers! Overflow {overflow} -> splash {splash_damage}.")
+
+        for nearby_enemy in list(self.adjacent_enemies(enemy.x, enemy.y)):
+            self.log(f"Gunpowder blast hits enemy for {splash_damage} damage.")
+            self.apply_damage_with_chain(nearby_enemy, splash_damage, allow_gunpowder=True)
 
     def frugal_soul_stats(self, rarity: str) -> Tuple[float, int]:
         chance_by_rarity = {
