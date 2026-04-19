@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from game import BOSS, FLOOR, MINIBOSS, WALL, Entity, Game, Spell, show_title_screen
+from game import BOSS, FLOOR, FRIENDLY, MINIBOSS, WALL, Entity, FriendlyEntity, Game, Spell, show_title_screen
 
 
 class GameTests(unittest.TestCase):
@@ -197,6 +197,22 @@ class GameTests(unittest.TestCase):
 
         self.assertIn(MINIBOSS, rendered)
         self.assertIn(BOSS, rendered)
+
+    def test_render_shows_friendly_icon(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 1, 1
+        g.stairs = (3, 1)
+        g.items = []
+        g.enemies = []
+        g.friendlies = [FriendlyEntity(2, 2)]
+
+        rendered = g.render()
+
+        self.assertIn(FRIENDLY, rendered)
 
     def test_comet_missile_hits_straight_line_enemy(self):
         g = Game(seed=1, width=7, height=7)
@@ -397,6 +413,80 @@ class GameTests(unittest.TestCase):
         self.assertGreater(counts["Uncommon"], counts["Rare"])
         self.assertGreater(counts["Rare"], counts["Epic"])
         self.assertGreater(counts["Epic"], counts["Legendary"])
+
+    def test_trade_rarity_distribution_is_better_than_normal_pickups(self):
+        g = Game(seed=1)
+        normal_counts = {}
+        trade_counts = {}
+
+        for _ in range(4000):
+            normal = g.roll_item_rarity()
+            trade = g.roll_trade_rarity()
+            normal_counts[normal] = normal_counts.get(normal, 0) + 1
+            trade_counts[trade] = trade_counts.get(trade, 0) + 1
+
+        normal_high = normal_counts["Rare"] + normal_counts["Epic"]
+        trade_high = trade_counts["Rare"] + trade_counts["Epic"]
+        normal_low = normal_counts["Common"] + normal_counts["Uncommon"]
+        trade_low = trade_counts["Common"] + trade_counts["Uncommon"]
+
+        self.assertGreater(trade_high, normal_high)
+        self.assertLess(trade_low, normal_low)
+
+    def test_friendly_trade_is_once_per_friendly(self):
+        g = Game(seed=1)
+        g.inventory = [("Common", "Potion")]
+        f = FriendlyEntity(1, 1, traded=False)
+        g.friendlies = [f]
+
+        with patch("builtins.input", return_value="1"), patch.object(g.rng, "choice", return_value="Bomb"), patch.object(
+            g, "roll_trade_rarity", return_value="Rare"
+        ):
+            g.trade_with_friendly(f)
+
+        inventory_after_first_trade = list(g.inventory)
+        g.trade_with_friendly(f)
+
+        self.assertTrue(f.traded)
+        self.assertEqual(g.inventory, inventory_after_first_trade)
+
+    def test_floor_clear_bonus_scales_with_floor_depth(self):
+        g = Game(seed=1)
+        g.floor = 7
+        g.enemies = []
+
+        g.maybe_grant_floor_clear_bonus()
+
+        self.assertTrue(g.floor_clear_bonus_granted)
+        self.assertIn("Floor clear bonus! +19 XP", "\n".join(g.message_log))
+
+    def test_frugal_soul_can_preserve_next_item(self):
+        g = Game(seed=1)
+        g.spells = [Spell("Frugal soul", "Rare")]
+        g.player_mp = 10
+        g.inventory = [("Common", "Potion")]
+
+        used = g.use_technique()
+        with patch.object(g.rng, "random", return_value=0.1):
+            g.use_item()
+
+        self.assertTrue(used)
+        self.assertEqual(g.player_mp, 6)
+        self.assertEqual(len(g.inventory), 1)
+
+    def test_frugal_soul_consumes_buff_after_one_item_use(self):
+        g = Game(seed=1)
+        g.spells = [Spell("Frugal soul", "Legendary")]
+        g.player_mp = 10
+        g.inventory = [("Common", "Potion"), ("Common", "Potion")]
+
+        g.use_technique()
+        with patch("builtins.input", return_value="1"), patch.object(g.rng, "random", return_value=0.0):
+            g.use_item()
+        with patch("builtins.input", return_value="1"), patch.object(g.rng, "random", return_value=0.0):
+            g.use_item()
+
+        self.assertEqual(len(g.inventory), 1)
 
     def test_calculate_score_reflects_floor_level_stats_and_arcana(self):
         g = Game(seed=1)
