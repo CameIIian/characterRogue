@@ -14,6 +14,7 @@ MINIBOSS = "M"
 BOSS = "B"
 ITEM = "I"
 STAIRS = ">"
+FRIENDLY = "F"
 LASER_WARNING = ","
 
 
@@ -39,6 +40,13 @@ class ItemEntity:
 class Spell:
     name: str
     rarity: str
+
+
+@dataclass
+class FriendlyEntity:
+    x: int
+    y: int
+    traded: bool = False
 
 
 class Game:
@@ -104,9 +112,12 @@ class Game:
         self.board: List[List[str]] = []
         self.enemies: List[Entity] = []
         self.items: List[ItemEntity] = []
+        self.friendlies: List[FriendlyEntity] = []
         self.stairs: Tuple[int, int] = (0, 0)
         self.boss_laser_targets: List[Tuple[int, int]] = []
         self.boss_enraged = False
+        self.floor_clear_bonus_granted = False
+        self.next_item_preserve_chance: Optional[float] = None
 
         self.generate_floor()
 
@@ -143,7 +154,7 @@ class Game:
             "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
             "System Commands: h=help",
-            "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, M=miniboss, B=boss, I=item, >=stairs",
+            "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, M=miniboss, B=boss, I=item, F=friendly, >=stairs",
         ]
 
     def log(self, msg: str) -> None:
@@ -160,6 +171,8 @@ class Game:
             if any(e.x == x and e.y == y for e in self.enemies):
                 continue
             if any(i.x == x and i.y == y for i in self.items):
+                continue
+            if any(f.x == x and f.y == y for f in self.friendlies):
                 continue
             if (x, y) == self.stairs:
                 continue
@@ -207,6 +220,7 @@ class Game:
             self.board = [[WALL for _ in range(self.width)] for _ in range(self.height)]
             self.enemies = []
             self.items = []
+            self.friendlies = []
             self.carve_paths()
 
             self.player.x, self.player.y = self.random_floor_only()
@@ -279,9 +293,12 @@ class Game:
 
         item_pool = ["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"]
         item_count = min(1 + self.floor // 2, 4)
+        self.floor_clear_bonus_granted = False
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
             self.items.append(ItemEntity(ix, iy, self.rng.choice(item_pool), self.roll_item_rarity()))
+        fx, fy = self.random_empty_tile()
+        self.friendlies.append(FriendlyEntity(fx, fy))
 
     def random_floor_only(self, exclude: Optional[set] = None) -> Tuple[int, int]:
         exclude = exclude or set()
@@ -307,6 +324,8 @@ class Game:
 
         for i in self.items:
             temp[i.y][i.x] = ITEM
+        for f in self.friendlies:
+            temp[f.y][f.x] = FRIENDLY
         for e in self.enemies:
             if e.kind == "miniboss":
                 temp[e.y][e.x] = MINIBOSS
@@ -367,6 +386,50 @@ class Game:
             if pick <= cumulative:
                 return rarity
         return "Rare"
+
+    def get_friendly_at(self, x: int, y: int) -> Optional[FriendlyEntity]:
+        for friendly in self.friendlies:
+            if friendly.x == x and friendly.y == y:
+                return friendly
+        return None
+
+    def roll_trade_rarity(self) -> str:
+        trade_tiers = [("Common", 25), ("Uncommon", 20), ("Rare", 32), ("Epic", 18), ("Legendary", 5)]
+        total_weight = sum(weight for _, weight in trade_tiers)
+        pick = self.rng.randint(1, total_weight)
+        cumulative = 0
+        for rarity, weight in trade_tiers:
+            cumulative += weight
+            if pick <= cumulative:
+                return rarity
+        return "Rare"
+
+    def trade_with_friendly(self, friendly: FriendlyEntity) -> None:
+        if friendly.traded:
+            self.log("This friendly traveler has already traded with you.")
+            return
+        if not self.inventory:
+            self.log("Friendly trader: Bring me an item and we can trade.")
+            return
+        item_index = self.choose_inventory_index()
+        if item_index is None:
+            return
+
+        offered_rarity, offered_kind = self.inventory.pop(item_index)
+        item_pool = ["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"]
+        new_kind = self.rng.choice(item_pool)
+        new_rarity = self.roll_trade_rarity()
+        self.inventory.append((new_rarity, new_kind))
+        friendly.traded = True
+        self.log(f"You traded {offered_rarity} {offered_kind} and received {new_rarity} {new_kind}.")
+
+    def maybe_grant_floor_clear_bonus(self) -> None:
+        if self.floor_clear_bonus_granted or self.enemies:
+            return
+        bonus = 5 + (self.floor * 2)
+        self.floor_clear_bonus_granted = True
+        self.log(f"Floor clear bonus! +{bonus} XP for clearing floor depth {self.floor}.")
+        self.gain_xp(bonus)
 
     @staticmethod
     def damage(attacker_atk: int, defender_def: int) -> int:
@@ -433,6 +496,7 @@ class Game:
                 self.log("Enemy defeated.")
                 xp_gain = 3 + self.floor
             self.gain_xp(xp_gain)
+            self.maybe_grant_floor_clear_bonus()
         return dmg
 
     def use_item(self) -> None:
@@ -444,7 +508,9 @@ class Game:
         if selected_index is None:
             return
 
-        rarity, kind = self.inventory.pop(selected_index)
+        rarity, kind = self.inventory[selected_index]
+        consumed = True
+        used_successfully = True
         potion_scaling = {
             "Common": (0.20, 5),
             "Uncommon": (0.40, 10),
@@ -488,27 +554,41 @@ class Game:
         elif kind == "Throwing axe":
             direction = self.choose_direction("Throw direction [w/a/s/d, other=cancel]: ")
             if direction is None:
-                self.inventory.insert(selected_index, (rarity, kind))
-                return
-            dx, dy, dir_label = direction
-            x, y = self.player.x + dx, self.player.y + dy
-            while 0 <= x < self.width and 0 <= y < self.height and self.board[y][x] != WALL:
-                enemy = self.get_enemy_at(x, y)
-                if enemy:
-                    dmg = self.apply_attack_item_damage(enemy, rarity, "Throwing axe")
-                    self.log(f"You threw a {rarity} Throwing axe {dir_label}, dealing {dmg} damage.")
-                    return
-                x += dx
-                y += dy
-            self.log("No enemy in the selected line for Throwing axe.")
+                used_successfully = False
+            if used_successfully:
+                dx, dy, dir_label = direction
+                x, y = self.player.x + dx, self.player.y + dy
+                while 0 <= x < self.width and 0 <= y < self.height and self.board[y][x] != WALL:
+                    enemy = self.get_enemy_at(x, y)
+                    if enemy:
+                        dmg = self.apply_attack_item_damage(enemy, rarity, "Throwing axe")
+                        self.log(f"You threw a {rarity} Throwing axe {dir_label}, dealing {dmg} damage.")
+                        break
+                    x += dx
+                    y += dy
+                else:
+                    self.log("No enemy in the selected line for Throwing axe.")
         elif kind == "Bomb":
             if not self.enemies:
                 self.log("No enemies on this floor. Bomb had no effect.")
-                return
-            total_dmg = 0
-            for enemy in list(self.enemies):
-                total_dmg += self.apply_attack_item_damage(enemy, rarity, "Bomb")
-            self.log(f"You used {rarity} Bomb and dealt {total_dmg} total damage to all enemies.")
+                used_successfully = False
+            else:
+                total_dmg = 0
+                for enemy in list(self.enemies):
+                    total_dmg += self.apply_attack_item_damage(enemy, rarity, "Bomb")
+                self.log(f"You used {rarity} Bomb and dealt {total_dmg} total damage to all enemies.")
+
+        if used_successfully:
+            if self.next_item_preserve_chance is not None:
+                chance = self.next_item_preserve_chance
+                self.next_item_preserve_chance = None
+                if self.rng.random() < chance:
+                    consumed = False
+                    self.log("Frugal soul activated! The item was not consumed.")
+                else:
+                    self.log("Frugal soul failed to preserve the item.")
+            if consumed:
+                self.inventory.pop(selected_index)
 
     def gain_xp(self, amount: int) -> None:
         self.xp += amount
@@ -569,7 +649,7 @@ class Game:
         elif skill == "a":
             self.skill_tree["arcane"] += 1
             spell = Spell(
-                self.rng.choice(["Comet Missile", "Flare Curtain", "God's Wrath", "Healing", "Vampire Kiss"]),
+                self.rng.choice(["Comet Missile", "Flare Curtain", "God's Wrath", "Healing", "Vampire Kiss", "Frugal soul"]),
                 self.roll_item_rarity(),
             )
             self.acquire_arcana(spell)
@@ -635,6 +715,9 @@ class Game:
 
         self.player.x, self.player.y = nx, ny
         self.pickup_item()
+        friendly = self.get_friendly_at(nx, ny)
+        if friendly:
+            self.trade_with_friendly(friendly)
 
         if (nx, ny) == self.stairs:
             if self.is_miniboss_floor(self.floor) and self.miniboss_alive():
@@ -670,6 +753,7 @@ class Game:
                 self.log("Enemy defeated.")
                 xp_gain = 3 + self.floor
             self.gain_xp(xp_gain)
+            self.maybe_grant_floor_clear_bonus()
             return
 
     def spell_power_multiplier(self, rarity: str) -> float:
@@ -732,6 +816,8 @@ class Game:
             return self.cast_healing(spell)
         if spell.name == "Vampire Kiss":
             return self.cast_vampire_kiss(spell)
+        if spell.name == "Frugal soul":
+            return self.cast_frugal_soul(spell)
 
         self.log("Unknown spell.")
         return False
@@ -744,6 +830,35 @@ class Game:
             self.log("Enemy defeated by magic.")
             xp_gain = 3 + self.floor
             self.gain_xp(xp_gain)
+            self.maybe_grant_floor_clear_bonus()
+
+    def frugal_soul_stats(self, rarity: str) -> Tuple[float, int]:
+        chance_by_rarity = {
+            "Common": 0.20,
+            "Uncommon": 0.30,
+            "Rare": 0.50,
+            "Epic": 0.70,
+            "Legendary": 0.85,
+        }
+        mp_cost_by_rarity = {
+            "Common": 2,
+            "Uncommon": 3,
+            "Rare": 4,
+            "Epic": 5,
+            "Legendary": 6,
+        }
+        return chance_by_rarity.get(rarity, 0.20), mp_cost_by_rarity.get(rarity, 2)
+
+    def cast_frugal_soul(self, spell: Spell) -> bool:
+        preserve_chance, mp_cost = self.frugal_soul_stats(spell.rarity)
+        if self.player_mp < mp_cost:
+            self.log(f"Not enough MP. Need {mp_cost} MP.")
+            return False
+        self.player_mp -= mp_cost
+        self.next_item_preserve_chance = preserve_chance
+        self.log(f"{spell.rarity} Frugal soul is active. Next item has {int(preserve_chance * 100)}% chance to not be consumed.")
+        self.log(f"MP -{mp_cost}.")
+        return True
 
     def cast_comet_missile(self, spell: Spell) -> bool:
         base_cost = 2
