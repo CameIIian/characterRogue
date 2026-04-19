@@ -188,6 +188,7 @@ class GameTests(unittest.TestCase):
         g.player.x, g.player.y = 1, 1
         g.stairs = (3, 1)
         g.items = []
+        g.friendlies = []
         g.enemies = [
             Entity(2, 2, hp=1, atk=1, defense=0, kind="miniboss"),
             Entity(3, 3, hp=1, atk=1, defense=0, kind="boss"),
@@ -213,6 +214,14 @@ class GameTests(unittest.TestCase):
         rendered = g.render()
 
         self.assertIn(FRIENDLY, rendered)
+
+    def test_generate_floor_spawns_three_friendly_roles(self):
+        g = Game(seed=1)
+
+        roles = sorted(f.role for f in g.friendlies)
+
+        self.assertEqual(len(g.friendlies), 3)
+        self.assertEqual(roles, ["maze traveler", "merchant", "technician"])
 
     def test_comet_missile_hits_straight_line_enemy(self):
         g = Game(seed=1, width=7, height=7)
@@ -449,6 +458,42 @@ class GameTests(unittest.TestCase):
 
         self.assertTrue(f.traded)
         self.assertEqual(g.inventory, inventory_after_first_trade)
+
+    def test_technician_trades_item_for_arcana(self):
+        g = Game(seed=1)
+        g.inventory = [("Common", "Potion")]
+        technician = FriendlyEntity(1, 1, role="technician", traded=False)
+        g.friendlies = [technician]
+
+        with patch.object(g.rng, "choice", return_value="Healing"), patch.object(g, "roll_item_rarity", return_value="Epic"):
+            g.trade_with_friendly(technician)
+
+        self.assertTrue(technician.traded)
+        self.assertEqual(g.inventory, [])
+        self.assertEqual(len(g.spells), 1)
+        self.assertEqual((g.spells[0].name, g.spells[0].rarity), ("Healing", "Epic"))
+
+    def test_maze_traveler_sets_next_floor_destination(self):
+        g = Game(seed=1)
+        g.floor = 6
+        traveler = FriendlyEntity(1, 1, role="maze traveler", traded=False)
+        g.friendlies = [traveler]
+
+        with patch.object(g.rng, "choice", return_value=12):
+            g.trade_with_friendly(traveler)
+
+        self.assertTrue(traveler.traded)
+        self.assertEqual(g.next_floor_destination, 12)
+
+    def test_advance_floor_uses_maze_traveler_destination(self):
+        g = Game(seed=1)
+        g.floor = 6
+        g.next_floor_destination = 3
+
+        g.advance_floor()
+
+        self.assertEqual(g.floor, 3)
+        self.assertIsNone(g.next_floor_destination)
 
     def test_floor_clear_bonus_scales_with_floor_depth(self):
         g = Game(seed=1)
