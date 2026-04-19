@@ -534,18 +534,18 @@ class Game:
     def spell_power_multiplier(self, rarity: str) -> float:
         return {
             "Common": 1.00,
-            "Uncommon": 1.12,
-            "Rare": 1.25,
-            "Epic": 1.42,
-            "Legendary": 1.65,
+            "Uncommon": 1.33,
+            "Rare": 1.66,
+            "Epic": 2.25,
+            "Legendary": 3.00,
         }.get(rarity, 1.0)
 
     def spell_mp_bonus(self, rarity: str) -> int:
         return {
             "Common": 0,
-            "Uncommon": 0,
+            "Uncommon": 1,
             "Rare": 1,
-            "Epic": 1,
+            "Epic": 2,
             "Legendary": 2,
         }.get(rarity, 0)
 
