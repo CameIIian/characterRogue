@@ -67,6 +67,21 @@ class Game:
             "Legendary": 0.50,
         },
     }
+    ACCESSORY_KINDS = {"Lucky amulet", "Kote"}
+    XP_MULTIPLIER_BY_RARITY = {
+        "Common": 1.10,
+        "Uncommon": 1.20,
+        "Rare": 1.35,
+        "Epic": 1.55,
+        "Legendary": 1.80,
+    }
+    KOTE_BONUS_BY_RARITY = {
+        "Common": (1, 1),
+        "Uncommon": (2, 2),
+        "Rare": (3, 3),
+        "Epic": (5, 5),
+        "Legendary": (8, 8),
+    }
 
     def __init__(
         self,
@@ -94,6 +109,7 @@ class Game:
         self._turn_event_buffer: List[str] = []
         self._is_capturing_turn_events = False
         self.inventory: List[Tuple[str, str]] = []
+        self.equipped_accessory: Optional[Tuple[str, str]] = None
         self.player = Entity(0, 0, hp=10, atk=3, defense=1)
         self.player_max_hp = 10
         self.player_max_mp = 5
@@ -303,7 +319,7 @@ class Game:
                 Entity(
                     bx,
                     by,
-                    hp=max(1, int((30 + (self.floor * 3) + (cycle * 8)) * self.enemy_power_multiplier)),
+                    hp=max(1, int((45 + (self.floor * 4) + (cycle * 12)) * self.enemy_power_multiplier)),
                     atk=max(
                         1,
                         int(
@@ -312,18 +328,17 @@ class Game:
                             * self.enemy_attack_boost
                         ),
                     ),
-                    defense=max(0, int((5 + (self.floor // 4) + cycle) * self.enemy_power_multiplier)),
+                    defense=max(0, int((8 + (self.floor // 3) + (cycle * 2)) * self.enemy_power_multiplier)),
                     kind="boss",
                 )
             )
             self.log("The Great Boss awaits. Defeat it to unlock the stairs.")
 
-        item_pool = ["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"]
         item_count = min(1 + self.floor // 2, 4)
         self.floor_clear_bonus_granted = False
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
-            self.items.append(ItemEntity(ix, iy, self.rng.choice(item_pool), self.roll_item_rarity()))
+            self.items.append(ItemEntity(ix, iy, self.random_item_kind(), self.roll_item_rarity()))
         merchant_x, merchant_y = self.random_empty_tile()
         self.friendlies.append(FriendlyEntity(merchant_x, merchant_y, role="merchant"))
         technician_x, technician_y = self.random_empty_tile()
@@ -372,10 +387,15 @@ class Game:
         return " | ".join(self.status_lines())
 
     def status_lines(self) -> List[str]:
+        accessory_text = (
+            f"Accessory: {self.equipped_accessory[0]} {self.equipped_accessory[1]}"
+            if self.equipped_accessory
+            else "Accessory: None"
+        )
         return [
             f"Floor: {self.floor}  Moves: {self.moves}",
             f"HP: {self.player.hp}/{self.player_max_hp}  MP: {self.player_mp}/{self.player_max_mp}  SP: {self.skill_points}",
-            f"Lv: {self.level}  XP: {self.xp}/{self.next_level_xp}  ATK: {self.player.atk}  DEF: {self.player.defense}",
+            f"Lv: {self.level}  XP: {self.xp}/{self.next_level_xp}  ATK: {self.player.atk}  DEF: {self.player.defense}  {accessory_text}",
         ]
 
     def roll_item_rarity(self) -> str:
@@ -388,6 +408,33 @@ class Game:
             if pick <= cumulative:
                 return rarity
         return "Common"
+
+
+    def random_item_kind(self) -> str:
+        return self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb", "Lucky amulet", "Kote"])
+
+    def apply_accessory_effect(self, rarity: str, kind: str) -> None:
+        if kind == "Kote":
+            atk_bonus, def_bonus = self.KOTE_BONUS_BY_RARITY.get(rarity, (1, 1))
+            self.player.atk += atk_bonus
+            self.player.defense += def_bonus
+
+    def remove_accessory_effect(self, rarity: str, kind: str) -> None:
+        if kind == "Kote":
+            atk_bonus, def_bonus = self.KOTE_BONUS_BY_RARITY.get(rarity, (1, 1))
+            self.player.atk = max(1, self.player.atk - atk_bonus)
+            self.player.defense = max(0, self.player.defense - def_bonus)
+
+    def equip_accessory(self, rarity: str, kind: str) -> None:
+        if self.equipped_accessory is not None:
+            equipped_rarity, equipped_kind = self.equipped_accessory
+            self.remove_accessory_effect(equipped_rarity, equipped_kind)
+            self.inventory.append((equipped_rarity, equipped_kind))
+            self.log(f"Removed {equipped_rarity} {equipped_kind} and returned it to inventory.")
+
+        self.equipped_accessory = (rarity, kind)
+        self.apply_accessory_effect(rarity, kind)
+        self.log(f"Equipped {rarity} {kind}.")
 
     def get_enemy_at(self, x: int, y: int) -> Optional[Entity]:
         for e in self.enemies:
@@ -467,8 +514,7 @@ class Game:
             return
 
         offered_rarity, offered_kind = self.inventory.pop(item_index)
-        item_pool = ["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"]
-        new_kind = self.rng.choice(item_pool)
+        new_kind = self.random_item_kind()
         new_rarity = self.roll_trade_rarity()
         self.inventory.append((new_rarity, new_kind))
         friendly.traded = True
@@ -560,13 +606,13 @@ class Game:
             self.enemies.remove(enemy)
             if enemy.kind == "miniboss":
                 self.log("Miniboss defeated! The stairs are now unsealed.")
-                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
+                chest_kind = self.random_item_kind()
                 self.items.append(ItemEntity(enemy.x, enemy.y, chest_kind, self.roll_high_rarity()))
                 self.log("A treasure chest drops a high-rarity item.")
                 xp_gain = 12 + self.floor
             elif enemy.kind == "boss":
                 self.log("Great Boss defeated! The stairs are now unsealed.")
-                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
+                chest_kind = self.random_item_kind()
                 self.items.append(ItemEntity(enemy.x, enemy.y, chest_kind, "Legendary"))
                 self.log("A legendary treasure chest drops where the boss fell.")
                 self.boss_laser_targets = []
@@ -630,6 +676,8 @@ class Game:
             restore = max(minimum, int(self.player_max_mp * ratio))
             self.player_mp = min(self.player_max_mp, self.player_mp + restore)
             self.log(f"You used {rarity} Ether and restored {restore} MP.")
+        elif kind in self.ACCESSORY_KINDS:
+            self.equip_accessory(rarity, kind)
         elif kind == "Throwing axe":
             direction = self.choose_direction("Throw direction [w/a/s/d, other=cancel]: ")
             if direction is None:
@@ -670,8 +718,15 @@ class Game:
                 self.inventory.pop(selected_index)
 
     def gain_xp(self, amount: int) -> None:
-        self.xp += amount
-        self.log(f"You gained {amount} XP.")
+        gained = amount
+        if self.equipped_accessory and self.equipped_accessory[1] == "Lucky amulet":
+            multiplier = self.XP_MULTIPLIER_BY_RARITY.get(self.equipped_accessory[0], 1.10)
+            gained = max(1, int(amount * multiplier))
+            self.log(
+                f"Lucky amulet boosted XP gain: {amount} -> {gained} (x{multiplier:.2f})."
+            )
+        self.xp += gained
+        self.log(f"You gained {gained} XP.")
         while self.xp >= self.next_level_xp:
             self.xp -= self.next_level_xp
             self.level_up()
@@ -817,13 +872,13 @@ class Game:
             self.enemies.remove(enemy)
             if enemy.kind == "miniboss":
                 self.log("Miniboss defeated! The stairs are now unsealed.")
-                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
+                chest_kind = self.random_item_kind()
                 self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, self.roll_high_rarity()))
                 self.log("A treasure chest drops a high-rarity item.")
                 xp_gain = 12 + self.floor
             elif enemy.kind == "boss":
                 self.log("Great Boss defeated! The stairs are now unsealed.")
-                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
+                chest_kind = self.random_item_kind()
                 self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, "Legendary"))
                 self.log("A legendary treasure chest drops where the boss fell.")
                 self.boss_laser_targets = []

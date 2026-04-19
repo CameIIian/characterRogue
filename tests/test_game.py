@@ -599,6 +599,63 @@ class GameTests(unittest.TestCase):
         self.assertEqual(Game(seed=1, difficulty="Hard").enemy_power_multiplier, 1.5)
         self.assertEqual(Game(seed=1, difficulty="Lunatic").enemy_power_multiplier, 2.0)
 
+
+    def test_boss_stats_are_scaled_higher(self):
+        g = Game(seed=1)
+        g.floor = 10
+        g.generate_floor()
+
+        boss = next(enemy for enemy in g.enemies if enemy.kind == "boss")
+
+        self.assertGreaterEqual(boss.hp, 70)
+        self.assertGreaterEqual(boss.defense, 11)
+
+    def test_using_accessory_equips_it_and_applies_kote_bonus(self):
+        g = Game(seed=1)
+        base_atk = g.player.atk
+        base_def = g.player.defense
+        g.inventory = [("Rare", "Kote")]
+
+        g.use_item()
+
+        self.assertEqual(g.equipped_accessory, ("Rare", "Kote"))
+        self.assertEqual(g.player.atk, base_atk + 3)
+        self.assertEqual(g.player.defense, base_def + 3)
+        self.assertEqual(g.inventory, [])
+
+    def test_equipping_new_accessory_returns_previous_to_inventory(self):
+        g = Game(seed=1)
+        g.inventory = [("Common", "Lucky amulet"), ("Epic", "Kote")]
+
+        with patch("builtins.input", side_effect=["1", "1"]):
+            g.use_item()
+            g.use_item()
+
+        self.assertEqual(g.equipped_accessory, ("Epic", "Kote"))
+        self.assertIn(("Common", "Lucky amulet"), g.inventory)
+        self.assertNotIn(("Epic", "Kote"), g.inventory)
+
+    def test_lucky_amulet_boosts_xp_by_rarity(self):
+        g = Game(seed=1)
+        g.equipped_accessory = ("Legendary", "Lucky amulet")
+        g.next_level_xp = 999
+
+        g.gain_xp(10)
+
+        self.assertEqual(g.xp, 18)
+
+    def test_merchant_trade_can_grant_accessory(self):
+        g = Game(seed=1)
+        g.inventory = [("Common", "Potion")]
+        merchant = FriendlyEntity(1, 1, role="merchant", traded=False)
+
+        with patch("builtins.input", return_value="1"), patch.object(g, "random_item_kind", return_value="Kote"), patch.object(
+            g, "roll_trade_rarity", return_value="Epic"
+        ):
+            g.trade_with_friendly(merchant)
+
+        self.assertIn(("Epic", "Kote"), g.inventory)
+
     def test_floor_five_has_miniboss(self):
         g = Game(seed=1)
         g.floor = 5
