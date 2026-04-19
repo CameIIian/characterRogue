@@ -42,6 +42,23 @@ class Spell:
 
 
 class Game:
+    ITEM_DAMAGE_RATIOS = {
+        "Throwing axe": {
+            "Common": 0.20,
+            "Uncommon": 0.30,
+            "Rare": 0.45,
+            "Epic": 0.65,
+            "Legendary": 0.80,
+        },
+        "Bomb": {
+            "Common": 0.10,
+            "Uncommon": 0.20,
+            "Rare": 0.30,
+            "Epic": 0.40,
+            "Legendary": 0.50,
+        },
+    }
+
     def __init__(
         self,
         width: int = 10,
@@ -260,7 +277,7 @@ class Game:
             )
             self.log("The Great Boss awaits. Defeat it to unlock the stairs.")
 
-        item_pool = ["Potion", "Power", "Shield", "Ether"]
+        item_pool = ["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"]
         item_count = min(1 + self.floor // 2, 4)
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
@@ -363,12 +380,71 @@ class Game:
         self.inventory.append((item.rarity, item.kind))
         self.log(f"You picked up a {item.rarity} {item.kind}.")
 
+    def choose_inventory_index(self) -> Optional[int]:
+        if len(self.inventory) == 1:
+            return 0
+
+        self.log("Choose item to use:")
+        for idx, (rarity, kind) in enumerate(self.inventory, start=1):
+            self.log(f"{idx}: {rarity} {kind}")
+        choice = input("Use which item [number, other=cancel]: ").strip()
+        if not choice.isdigit():
+            self.log("Item use cancelled.")
+            return None
+        item_index = int(choice) - 1
+        if not (0 <= item_index < len(self.inventory)):
+            self.log("Invalid item choice.")
+            return None
+        return item_index
+
+    def choose_direction(self, prompt: str) -> Optional[Tuple[int, int, str]]:
+        direction_map = {
+            "w": (0, -1, "up"),
+            "s": (0, 1, "down"),
+            "a": (-1, 0, "left"),
+            "d": (1, 0, "right"),
+        }
+        choice = input(prompt).strip().lower()[:1]
+        if choice not in direction_map:
+            self.log("Direction selection cancelled.")
+            return None
+        return direction_map[choice]
+
+    def apply_attack_item_damage(self, enemy: Entity, rarity: str, kind: str) -> int:
+        ratio = self.ITEM_DAMAGE_RATIOS.get(kind, {}).get(rarity, 0.10)
+        dmg = max(1, int(enemy.hp * ratio))
+        enemy.hp -= dmg
+        if enemy.hp <= 0:
+            self.enemies.remove(enemy)
+            if enemy.kind == "miniboss":
+                self.log("Miniboss defeated! The stairs are now unsealed.")
+                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
+                self.items.append(ItemEntity(enemy.x, enemy.y, chest_kind, self.roll_high_rarity()))
+                self.log("A treasure chest drops a high-rarity item.")
+                xp_gain = 12 + self.floor
+            elif enemy.kind == "boss":
+                self.log("Great Boss defeated! The stairs are now unsealed.")
+                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
+                self.items.append(ItemEntity(enemy.x, enemy.y, chest_kind, "Legendary"))
+                self.log("A legendary treasure chest drops where the boss fell.")
+                self.boss_laser_targets = []
+                xp_gain = 24 + self.floor
+            else:
+                self.log("Enemy defeated.")
+                xp_gain = 3 + self.floor
+            self.gain_xp(xp_gain)
+        return dmg
+
     def use_item(self) -> None:
         if not self.inventory:
             self.log("Inventory is empty.")
             return
 
-        rarity, kind = self.inventory.pop(0)
+        selected_index = self.choose_inventory_index()
+        if selected_index is None:
+            return
+
+        rarity, kind = self.inventory.pop(selected_index)
         potion_scaling = {
             "Common": (0.20, 5),
             "Uncommon": (0.40, 10),
@@ -409,6 +485,30 @@ class Game:
             restore = max(minimum, int(self.player_max_mp * ratio))
             self.player_mp = min(self.player_max_mp, self.player_mp + restore)
             self.log(f"You used {rarity} Ether and restored {restore} MP.")
+        elif kind == "Throwing axe":
+            direction = self.choose_direction("Throw direction [w/a/s/d, other=cancel]: ")
+            if direction is None:
+                self.inventory.insert(selected_index, (rarity, kind))
+                return
+            dx, dy, dir_label = direction
+            x, y = self.player.x + dx, self.player.y + dy
+            while 0 <= x < self.width and 0 <= y < self.height and self.board[y][x] != WALL:
+                enemy = self.get_enemy_at(x, y)
+                if enemy:
+                    dmg = self.apply_attack_item_damage(enemy, rarity, "Throwing axe")
+                    self.log(f"You threw a {rarity} Throwing axe {dir_label}, dealing {dmg} damage.")
+                    return
+                x += dx
+                y += dy
+            self.log("No enemy in the selected line for Throwing axe.")
+        elif kind == "Bomb":
+            if not self.enemies:
+                self.log("No enemies on this floor. Bomb had no effect.")
+                return
+            total_dmg = 0
+            for enemy in list(self.enemies):
+                total_dmg += self.apply_attack_item_damage(enemy, rarity, "Bomb")
+            self.log(f"You used {rarity} Bomb and dealt {total_dmg} total damage to all enemies.")
 
     def gain_xp(self, amount: int) -> None:
         self.xp += amount
@@ -530,13 +630,13 @@ class Game:
             self.enemies.remove(enemy)
             if enemy.kind == "miniboss":
                 self.log("Miniboss defeated! The stairs are now unsealed.")
-                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether"])
+                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
                 self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, self.roll_high_rarity()))
                 self.log("A treasure chest drops a high-rarity item.")
                 xp_gain = 12 + self.floor
             elif enemy.kind == "boss":
                 self.log("Great Boss defeated! The stairs are now unsealed.")
-                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether"])
+                chest_kind = self.rng.choice(["Potion", "Power", "Shield", "Ether", "Throwing axe", "Bomb"])
                 self.items.append(ItemEntity(defeat_x, defeat_y, chest_kind, "Legendary"))
                 self.log("A legendary treasure chest drops where the boss fell.")
                 self.boss_laser_targets = []
