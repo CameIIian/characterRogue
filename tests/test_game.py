@@ -216,6 +216,83 @@ class GameTests(unittest.TestCase):
         self.assertLess(target.hp, 10)
         self.assertLess(g.player_mp, 10)
 
+    def test_comet_missile_can_choose_direction_when_multiple_lines_have_targets(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 3, 3
+        g.player.atk = 6
+        g.player_mp = 10
+        g.spells = [Spell("Comet Missile", "Common")]
+        down_target = Entity(3, 4, hp=10, atk=1, defense=0)
+        right_target = Entity(4, 3, hp=10, atk=1, defense=0)
+        g.enemies = [down_target, right_target]
+
+        with patch("builtins.input", return_value="d"):
+            used = g.use_technique()
+
+        self.assertTrue(used)
+        self.assertLess(right_target.hp, 10)
+        self.assertEqual(down_target.hp, 10)
+
+    def test_healing_spell_restores_hp_and_consumes_mp(self):
+        g = Game(seed=1)
+        g.player_max_hp = 50
+        g.player.hp = 10
+        g.player_mp = 10
+        g.spells = [Spell("Healing", "Rare")]
+
+        used = g.use_technique()
+
+        self.assertTrue(used)
+        self.assertEqual(g.player.hp, 22)
+        self.assertEqual(g.player_mp, 7)
+
+    def test_vampire_kiss_uses_rarity_damage_and_drains_hp(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 9
+        g.player.hp = 5
+        g.player_max_hp = 20
+        g.player_mp = 10
+        g.spells = [Spell("Vampire Kiss", "Rare")]
+        enemy = Entity(2, 1, hp=30, atk=1, defense=0)
+        g.enemies = [enemy]
+
+        used = g.use_technique()
+
+        self.assertTrue(used)
+        self.assertEqual(enemy.hp, 21)
+        self.assertEqual(g.player.hp, 8)
+        self.assertEqual(g.player_mp, 6)
+
+    def test_vampire_kiss_can_choose_direction_for_adjacent_target(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 6
+        g.player_mp = 10
+        g.spells = [Spell("Vampire Kiss", "Common")]
+        up_enemy = Entity(2, 1, hp=10, atk=1, defense=0)
+        right_enemy = Entity(3, 2, hp=10, atk=1, defense=0)
+        g.enemies = [up_enemy, right_enemy]
+
+        with patch("builtins.input", return_value="d"):
+            used = g.use_technique()
+
+        self.assertTrue(used)
+        self.assertLess(right_enemy.hp, 10)
+        self.assertEqual(up_enemy.hp, 10)
+
     def test_gods_wrath_requires_one_turn_chant(self):
         g = Game(seed=1)
         g.board = [[WALL for _ in range(5)] for _ in range(5)]
