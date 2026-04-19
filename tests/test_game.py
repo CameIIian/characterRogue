@@ -245,6 +245,45 @@ class GameTests(unittest.TestCase):
 
         self.assertGreater(legendary_hp, common_hp)
 
+    def test_can_use_non_first_inventory_item(self):
+        g = Game(seed=1)
+        g.player.atk = 3
+        g.inventory = [("Common", "Shield"), ("Common", "Power")]
+
+        with patch("builtins.input", return_value="2"):
+            g.use_item()
+
+        self.assertEqual(g.player.atk, 4)
+        self.assertEqual(g.inventory, [("Common", "Shield")])
+
+    def test_throwing_axe_hits_enemy_in_selected_direction(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        target = Entity(2, 4, hp=20, atk=1, defense=0)
+        g.enemies = [target]
+        g.inventory = [("Rare", "Throwing axe")]
+
+        with patch("builtins.input", return_value="s"):
+            g.use_item()
+
+        self.assertEqual(target.hp, 11)
+
+    def test_bomb_damages_all_enemies(self):
+        g = Game(seed=1)
+        enemy1 = Entity(1, 1, hp=20, atk=1, defense=0)
+        enemy2 = Entity(2, 1, hp=10, atk=1, defense=0)
+        g.enemies = [enemy1, enemy2]
+        g.inventory = [("Epic", "Bomb")]
+
+        g.use_item()
+
+        self.assertEqual(enemy1.hp, 12)
+        self.assertEqual(enemy2.hp, 6)
+
     def test_item_rarity_distribution_favors_common(self):
         g = Game(seed=1)
         counts = {}
