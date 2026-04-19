@@ -67,7 +67,7 @@ class Game:
             "Legendary": 0.50,
         },
     }
-    ACCESSORY_KINDS = {"Lucky amulet", "Kote", "Vampire's Fang", "Dark Wizard's Staff"}
+    ACCESSORY_KINDS = {"Lucky amulet", "Kote", "Vampire's Fang", "Dark Wizard's Staff", "Guardian's Armor"}
     XP_MULTIPLIER_BY_RARITY = {
         "Common": 1.10,
         "Uncommon": 1.20,
@@ -88,6 +88,28 @@ class Game:
         "Rare": 0.60,
         "Epic": 0.80,
         "Legendary": 1.00,
+    }
+    GUARDIAN_ARMOR_MULTIPLIER_BY_RARITY = {
+        "Common": 1.15,
+        "Uncommon": 1.25,
+        "Rare": 1.35,
+        "Epic": 1.50,
+        "Legendary": 1.75,
+    }
+    ACCESSORY_DESCRIPTIONS = {
+        "Lucky amulet": "Boosts gained XP based on rarity.",
+        "Kote": "Raises ATK and DEF while equipped.",
+        "Vampire's Fang": "Converts overheal HP into MP.",
+        "Dark Wizard's Staff": "Converts over-restored MP into HP.",
+        "Guardian's Armor": "Waiting stacks DEF, while moving resets DEF to base.",
+    }
+    ARCANA_DESCRIPTIONS = {
+        "Comet Missile": "Fires a line attack at one directional target.",
+        "Flare Curtain": "Hits every enemy adjacent to you.",
+        "God's Wrath": "A two-turn chant that unleashes heavy single-target damage.",
+        "Healing": "Consumes MP to restore your HP.",
+        "Vampire Kiss": "Damages one adjacent enemy and drains HP.",
+        "Frugal soul": "Your next item may be preserved instead of consumed.",
     }
 
     def __init__(
@@ -118,6 +140,8 @@ class Game:
         self.inventory: List[Tuple[str, str]] = []
         self.equipped_accessory: Optional[Tuple[str, str]] = None
         self.player = Entity(0, 0, hp=10, atk=3, defense=1)
+        self.guardian_armor_base_defense: Optional[int] = None
+        self.guardian_armor_multiplier: float = 1.0
         self.player_max_hp = 10
         self.player_max_mp = 5
         self.player_mp = 5
@@ -181,7 +205,7 @@ class Game:
             "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item,",
             "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
-            "System Commands: h=help, l=turn log",
+            "System Commands: h=help, l=turn log, p=status details",
             "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, M=miniboss, B=boss, I=item, F=friendly, >=stairs",
         ]
 
@@ -430,7 +454,43 @@ class Game:
                 "Kote",
                 "Vampire's Fang",
                 "Dark Wizard's Staff",
+                "Guardian's Armor",
             ]
+        )
+
+    def is_guardian_armor_equipped(self) -> bool:
+        return self.equipped_accessory is not None and self.equipped_accessory[1] == "Guardian's Armor"
+
+    def refresh_guardian_armor_defense(self) -> None:
+        if self.guardian_armor_base_defense is None:
+            return
+        self.player.defense = max(0, int(self.guardian_armor_base_defense * self.guardian_armor_multiplier))
+
+    def add_player_defense(self, amount: int) -> None:
+        if amount == 0:
+            return
+        if self.is_guardian_armor_equipped() and self.guardian_armor_base_defense is not None:
+            self.guardian_armor_base_defense = max(0, self.guardian_armor_base_defense + amount)
+            self.refresh_guardian_armor_defense()
+            return
+        self.player.defense = max(0, self.player.defense + amount)
+
+    def reset_guardian_armor_defense(self) -> None:
+        if not self.is_guardian_armor_equipped() or self.guardian_armor_base_defense is None:
+            return
+        self.guardian_armor_multiplier = 1.0
+        self.refresh_guardian_armor_defense()
+        self.log("Guardian's Armor reset: DEF returned to base after moving.")
+
+    def stack_guardian_armor_defense(self) -> None:
+        if not self.is_guardian_armor_equipped() or self.guardian_armor_base_defense is None:
+            return
+        rarity, _ = self.equipped_accessory
+        multiplier = self.GUARDIAN_ARMOR_MULTIPLIER_BY_RARITY.get(rarity, 1.15)
+        self.guardian_armor_multiplier *= multiplier
+        self.refresh_guardian_armor_defense()
+        self.log(
+            f"Guardian's Armor activated: DEF scaled by x{multiplier:.2f} (current {self.player.defense})."
         )
 
     def accessory_overflow_ratio(self, accessory_kind: str, rarity: str) -> float:
@@ -490,13 +550,22 @@ class Game:
         if kind == "Kote":
             atk_bonus, def_bonus = self.KOTE_BONUS_BY_RARITY.get(rarity, (1, 1))
             self.player.atk += atk_bonus
-            self.player.defense += def_bonus
+            self.add_player_defense(def_bonus)
+        elif kind == "Guardian's Armor":
+            self.guardian_armor_base_defense = max(0, self.player.defense)
+            self.guardian_armor_multiplier = 1.0
+            self.refresh_guardian_armor_defense()
 
     def remove_accessory_effect(self, rarity: str, kind: str) -> None:
         if kind == "Kote":
             atk_bonus, def_bonus = self.KOTE_BONUS_BY_RARITY.get(rarity, (1, 1))
             self.player.atk = max(1, self.player.atk - atk_bonus)
-            self.player.defense = max(0, self.player.defense - def_bonus)
+            self.add_player_defense(-def_bonus)
+        elif kind == "Guardian's Armor":
+            if self.guardian_armor_base_defense is not None:
+                self.player.defense = max(0, self.guardian_armor_base_defense)
+            self.guardian_armor_base_defense = None
+            self.guardian_armor_multiplier = 1.0
 
     def equip_accessory(self, rarity: str, kind: str) -> None:
         if self.equipped_accessory is not None:
@@ -742,7 +811,7 @@ class Game:
             self.log(f"You used {rarity} Power and gained +{gain} ATK.")
         elif kind == "Shield":
             gain = power_shield_gain.get(rarity, 1)
-            self.player.defense += gain
+            self.add_player_defense(gain)
             self.log(f"You used {rarity} Shield and gained +{gain} DEF.")
         elif kind == "Ether":
             ratio, minimum = ether_scaling.get(rarity, (0.20, 3))
@@ -824,7 +893,7 @@ class Game:
         self.player_max_hp += hp_gain
         self.player_max_mp += mp_gain
         self.player.atk += atk_gain
-        self.player.defense += def_gain
+        self.add_player_defense(def_gain)
         self.player.hp = self.player_max_hp
         self.player_mp = self.player_max_mp
         self.skill_points += 1
@@ -851,7 +920,7 @@ class Game:
             self.log("Strength upgraded: ATK +2.")
         elif skill == "g":
             self.skill_tree["guard"] += 1
-            self.player.defense += 2
+            self.add_player_defense(2)
             self.log("Guard upgraded: DEF +2.")
         elif skill == "a":
             self.skill_tree["arcane"] += 1
@@ -1403,6 +1472,21 @@ class Game:
             return
         self.log("Inventory: " + ", ".join(f"{rarity} {kind}" for rarity, kind in self.inventory))
 
+    def show_status_details(self) -> None:
+        self.log("=== Status Details ===")
+        if self.equipped_accessory:
+            rarity, kind = self.equipped_accessory
+            description = self.ACCESSORY_DESCRIPTIONS.get(kind, "No description.")
+            self.log(f"Accessory: {rarity} {kind} - {description}")
+        else:
+            self.log("Accessory: None")
+        if self.spells:
+            for spell in self.spells:
+                description = self.ARCANA_DESCRIPTIONS.get(spell.name, "No description.")
+                self.log(f"Arcana: {spell.rarity} {spell.name} - {description}")
+        else:
+            self.log("Arcana: None")
+
     def calculate_score(self) -> int:
         rarity_points = {
             "Common": 40,
@@ -1429,19 +1513,24 @@ class Game:
         if cmd in acting_commands:
             self.start_turn_capture()
         if cmd == "w":
+            self.reset_guardian_armor_defense()
             self.move_player(0, -1)
             acted = True
         elif cmd == "s":
+            self.reset_guardian_armor_defense()
             self.move_player(0, 1)
             acted = True
         elif cmd == "a":
+            self.reset_guardian_armor_defense()
             self.move_player(-1, 0)
             acted = True
         elif cmd == "d":
+            self.reset_guardian_armor_defense()
             self.move_player(1, 0)
             acted = True
         elif cmd == ".":
             self.log("You wait.")
+            self.stack_guardian_armor_defense()
             acted = True
         elif cmd == "t":
             acted = self.use_technique()
@@ -1457,6 +1546,8 @@ class Game:
                 self.log(line)
         elif cmd == "l":
             self.show_turn_logs()
+        elif cmd == "p":
+            self.show_status_details()
         else:
             self.log("Invalid command.")
 
@@ -1547,7 +1638,7 @@ def main() -> None:
         if game.player.hp <= 0:
             show_game_over_screen(game)
             break
-        cmd = input("Command [w/a/s/d, t, ., i, u, k, h, l]: ").strip().lower()[:1]
+        cmd = input("Command [w/a/s/d, t, ., i, u, k, h, l, p]: ").strip().lower()[:1]
         if not cmd:
             continue
         game.take_turn(cmd)
