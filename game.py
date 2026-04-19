@@ -109,9 +109,9 @@ class Game:
     def help_lines() -> List[str]:
         return [
             "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item,",
-            "Attack Commands: f=attack, t=magic, k=skill,",
+            "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
-            "System Commands: h=help, q=quit",
+            "System Commands: h=help",
             "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, M=miniboss, B=boss, I=item, >=stairs",
         ]
 
@@ -129,6 +129,8 @@ class Game:
             if any(e.x == x and e.y == y for e in self.enemies):
                 continue
             if any(i.x == x and i.y == y for i in self.items):
+                continue
+            if (x, y) == self.stairs:
                 continue
             return x, y
         raise RuntimeError("Could not find an empty tile")
@@ -497,10 +499,6 @@ class Game:
             self.gain_xp(xp_gain)
             return
 
-        retaliation = self.damage(enemy.atk, self.player.defense)
-        self.player.hp -= retaliation
-        self.log(f"Enemy hits you for {retaliation} damage.")
-
     def spell_power_multiplier(self, rarity: str) -> float:
         return {
             "Common": 1.00,
@@ -821,9 +819,6 @@ class Game:
         elif cmd == ".":
             self.log("You wait.")
             acted = True
-        elif cmd == "f":
-            self.attack_adjacent()
-            acted = True
         elif cmd == "t":
             acted = self.use_technique()
         elif cmd == "i":
@@ -836,8 +831,6 @@ class Game:
         elif cmd == "h":
             for line in self.help_lines():
                 self.log(line)
-        elif cmd == "q":
-            return False
         else:
             self.log("Invalid command.")
 
@@ -872,12 +865,10 @@ def main() -> None:
         if game.player.hp <= 0:
             print("You died. Game Over.")
             break
-        cmd = input("Command [w/a/s/d, f, t, ., i, u, k, h, q]: ").strip().lower()[:1]
+        cmd = input("Command [w/a/s/d, t, ., i, u, k, h]: ").strip().lower()[:1]
         if not cmd:
             continue
-        if not game.take_turn(cmd):
-            print("You quit the game.")
-            break
+        game.take_turn(cmd)
 
 
 if __name__ == "__main__":
