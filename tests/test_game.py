@@ -23,6 +23,12 @@ class GameTests(unittest.TestCase):
         g = Game(seed=42)
         self.assertTrue(g.is_reachable((g.player.x, g.player.y), g.stairs))
 
+    def test_stairs_and_items_do_not_overlap(self):
+        g = Game(seed=42)
+        stairs = g.stairs
+        for item in g.items:
+            self.assertNotEqual((item.x, item.y), stairs)
+
     def test_combat_removes_dead_enemy(self):
         g = Game(seed=1)
         g.board = [[WALL for _ in range(5)] for _ in range(5)]
@@ -37,7 +43,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(len(g.enemies), 0)
         self.assertGreater(g.xp, 0)
 
-    def test_attack_command_hits_adjacent_enemy(self):
+    def test_move_into_enemy_attacks_adjacent_enemy(self):
         g = Game(seed=1)
         g.board = [[WALL for _ in range(5)] for _ in range(5)]
         for y in range(1, 4):
@@ -45,14 +51,32 @@ class GameTests(unittest.TestCase):
                 g.board[y][x] = FLOOR
         g.player.x, g.player.y = 2, 2
         g.player.atk = 3
-        enemy = Entity(2, 1, hp=2, atk=1, defense=0)
+        enemy = Entity(3, 2, hp=2, atk=1, defense=0)
         g.enemies = [enemy]
         g.items = []
 
-        g.take_turn("f")
+        g.take_turn("d")
 
         self.assertEqual(len(g.enemies), 0)
         self.assertEqual(g.moves, 1)
+
+    def test_enemy_does_not_retaliate_and_attack_again_in_same_turn(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.hp = 10
+        g.player.defense = 0
+        g.player.atk = 1
+        enemy = Entity(3, 2, hp=10, atk=2, defense=0)
+        g.enemies = [enemy]
+        g.items = []
+
+        g.take_turn("d")
+
+        self.assertEqual(g.player.hp, 8)
 
     def test_help_command_shows_commands_and_icons(self):
         g = Game(seed=1)
@@ -60,6 +84,16 @@ class GameTests(unittest.TestCase):
         log_text = "\n".join(g.message_log)
         self.assertIn("Commands:", log_text)
         self.assertIn("Icons:", log_text)
+        self.assertNotIn("q=quit", log_text)
+        self.assertNotIn("f=attack", log_text)
+
+    def test_q_command_no_longer_quits(self):
+        g = Game(seed=1)
+
+        continue_game = g.take_turn("q")
+
+        self.assertTrue(continue_game)
+        self.assertIn("Invalid command.", "\n".join(g.message_log))
 
     def test_level_up_restores_hp_mp_and_grants_skill_point(self):
         g = Game(seed=1)
