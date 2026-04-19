@@ -279,6 +279,12 @@ class GameTests(unittest.TestCase):
             difficulty = show_title_screen()
         self.assertEqual(difficulty, "Hard")
 
+    def test_difficulty_enemy_power_multiplier_values(self):
+        self.assertEqual(Game(seed=1, difficulty="Easy").enemy_power_multiplier, 0.5)
+        self.assertEqual(Game(seed=1, difficulty="Normal").enemy_power_multiplier, 1.0)
+        self.assertEqual(Game(seed=1, difficulty="Hard").enemy_power_multiplier, 1.5)
+        self.assertEqual(Game(seed=1, difficulty="Lunatic").enemy_power_multiplier, 2.0)
+
     def test_floor_five_has_miniboss(self):
         g = Game(seed=1)
         g.floor = 5
@@ -368,7 +374,24 @@ class GameTests(unittest.TestCase):
         self.assertEqual(len(spawned), 2)
         for minion in spawned:
             self.assertGreaterEqual(abs(minion.x - g.player.x) + abs(minion.y - g.player.y), 2)
-            self.assertEqual((minion.hp, minion.atk, minion.defense), (15, 6, 3))
+            self.assertEqual((minion.hp, minion.atk, minion.defense), (15, 12, 3))
+
+    def test_boss_laser_damage_is_three_times_boss_attack(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.hp = 100
+        g.player.defense = 5
+        boss = Entity(3, 2, hp=30, atk=10, defense=5, kind="boss")
+        g.enemies = [boss]
+        g.boss_laser_targets = [(2, 2)]
+
+        g.resolve_boss_laser()
+
+        self.assertEqual(g.player.hp, 75)
 
     def test_boss_enrage_triggers_once_and_fully_heals(self):
         g = Game(seed=1)
