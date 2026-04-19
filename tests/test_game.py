@@ -278,6 +278,45 @@ class GameTests(unittest.TestCase):
 
         self.assertTrue(used)
         self.assertLess(target.hp, 10)
+
+    def test_gunpowder_box_chains_overflow_on_normal_attack(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 10
+        g.equipped_accessory = ("Legendary", "Gunpowder box")
+        front_enemy = Entity(3, 2, hp=2, atk=1, defense=0)
+        splash_enemy = Entity(4, 2, hp=4, atk=1, defense=0)
+        g.enemies = [front_enemy, splash_enemy]
+        g.items = []
+
+        g.take_turn("d")
+
+        self.assertEqual(len(g.enemies), 0)
+        self.assertTrue(any("Gunpowder box triggers!" in msg for msg in g.message_log))
+
+    def test_gunpowder_box_chains_overflow_on_arcana(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.atk = 10
+        g.player_mp = 10
+        g.spells = [Spell("Comet Missile", "Common")]
+        g.equipped_accessory = ("Legendary", "Gunpowder box")
+        line_enemy = Entity(2, 4, hp=2, atk=1, defense=0)
+        adjacent_enemy = Entity(3, 4, hp=4, atk=1, defense=0)
+        g.enemies = [line_enemy, adjacent_enemy]
+
+        used = g.use_technique()
+
+        self.assertTrue(used)
+        self.assertEqual(len(g.enemies), 0)
         self.assertLess(g.player_mp, 10)
 
     def test_comet_missile_can_choose_direction_when_multiple_lines_have_targets(self):
