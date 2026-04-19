@@ -131,19 +131,6 @@ python3 -m unittest discover -s tests -v
 - `Roller shoes`: 1ターンの連続移動可能入力数を増加
 - `Gunpowder box`: **通常攻撃またはArcanaで敵を倒した際、超過ダメージを周囲1マスへ連鎖爆発として伝播**
 
-### Gunpowder box 詳細
-- 発動条件: 通常攻撃 / Arcana で敵を撃破
-- 超過ダメージ = `与ダメージ - 撃破時の残りHP`
-- 周囲1マス（8方向）の敵それぞれに、`超過ダメージ × レアリティ倍率` を与える
-- 爆発で倒した敵も同様に判定され、**連鎖**する
-
-倍率:
-- Common: 0.50x
-- Uncommon: 0.75x
-- Rare: 1.00x
-- Epic: 1.25x
-- Legendary: 1.75x
-
 ---
 
 ## Arcana（魔法）
