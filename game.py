@@ -42,11 +42,23 @@ class Spell:
 
 
 class Game:
-    def __init__(self, width: int = 10, height: int = 10, seed: Optional[int] = None):
+    def __init__(
+        self,
+        width: int = 10,
+        height: int = 10,
+        seed: Optional[int] = None,
+        difficulty: str = "Normal",
+    ):
         self.base_width = width
         self.width = width
         self.height = height
         self.rng = random.Random(seed)
+        self.difficulty = difficulty
+        self.enemy_power_multiplier = {
+            "Easy": 0.85,
+            "Normal": 1.0,
+            "Hard": 1.25,
+        }.get(difficulty, 1.0)
         self.floor = 1
         self.moves = 0
         self.message_log: deque[str] = deque(maxlen=7)
@@ -186,9 +198,9 @@ class Game:
 
         cycle = self.current_cycle()
         enemy_count = min(2 + self.floor + cycle, 12)
-        enemy_hp = 4 + (self.floor * 2) + (cycle * 4)
-        enemy_atk = 2 + (self.floor // 3) + (cycle * 2) + (self.floor // 2)
-        enemy_def = (self.floor // 4) + cycle
+        enemy_hp = int((4 + (self.floor * 2) + (cycle * 4)) * self.enemy_power_multiplier)
+        enemy_atk = int((2 + (self.floor // 3) + (cycle * 2) + (self.floor // 2)) * self.enemy_power_multiplier)
+        enemy_def = int(((self.floor // 4) + cycle) * self.enemy_power_multiplier)
         for _ in range(enemy_count):
             ex, ey = self.random_empty_tile()
             self.enemies.append(
@@ -208,8 +220,8 @@ class Game:
                     bx,
                     by,
                     hp=16 + (self.floor * 2) + (cycle * 6),
-                    atk=6 + (self.floor // 2) + (cycle * 2),
-                    defense=3 + (self.floor // 4) + cycle,
+                    atk=max(1, int((6 + (self.floor // 2) + (cycle * 2)) * self.enemy_power_multiplier)),
+                    defense=max(0, int((3 + (self.floor // 4) + cycle) * self.enemy_power_multiplier)),
                     kind="miniboss",
                 )
             )
@@ -220,9 +232,9 @@ class Game:
                 Entity(
                     bx,
                     by,
-                    hp=30 + (self.floor * 3) + (cycle * 8),
-                    atk=9 + (self.floor // 2) + (cycle * 3),
-                    defense=5 + (self.floor // 4) + cycle,
+                    hp=max(1, int((30 + (self.floor * 3) + (cycle * 8)) * self.enemy_power_multiplier)),
+                    atk=max(1, int((9 + (self.floor // 2) + (cycle * 3)) * self.enemy_power_multiplier)),
+                    defense=max(0, int((5 + (self.floor // 4) + cycle) * self.enemy_power_multiplier)),
                     kind="boss",
                 )
             )
@@ -802,6 +814,26 @@ class Game:
             return
         self.log("Inventory: " + ", ".join(f"{rarity} {kind}" for rarity, kind in self.inventory))
 
+    def calculate_score(self) -> int:
+        rarity_points = {
+            "Common": 40,
+            "Uncommon": 80,
+            "Rare": 140,
+            "Epic": 220,
+            "Legendary": 320,
+        }
+        floor_score = max(0, self.floor - 1) * 120
+        level_score = max(0, self.level - 1) * 80
+        status_score = (
+            (self.player_max_hp * 2)
+            + (self.player_max_mp * 10)
+            + (self.player.atk * 25)
+            + (self.player.defense * 25)
+            + (sum(self.skill_tree.values()) * 30)
+        )
+        arcana_score = sum(rarity_points.get(spell.rarity, 0) for spell in self.spells)
+        return floor_score + level_score + status_score + arcana_score
+
     def take_turn(self, cmd: str) -> bool:
         acted = False
         if cmd == "w":
@@ -849,9 +881,56 @@ def _handle_sigint(_sig, _frame):
     raise SystemExit(0)
 
 
+def choose_difficulty() -> str:
+    print("\nSelect difficulty:")
+    print("1) Easy")
+    print("2) Normal")
+    print("3) Hard")
+    choice = input("Choice [1-3]: ").strip()
+    return {"1": "Easy", "2": "Normal", "3": "Hard"}.get(choice, "Normal")
+
+
+def show_title_screen() -> Optional[str]:
+    difficulty = "Normal"
+    while True:
+        print("\n==============================")
+        print("      CHARACTER ROGUE")
+        print("==============================")
+        print(f"Difficulty: {difficulty}")
+        print("1) Start")
+        print("2) Change Difficulty")
+        print("3) Quit")
+        choice = input("Select [1-3]: ").strip()
+        if choice == "1":
+            return difficulty
+        if choice == "2":
+            difficulty = choose_difficulty()
+            continue
+        if choice == "3":
+            return None
+        print("Invalid selection.")
+
+
+def show_game_over_screen(game: Game) -> None:
+    score = game.calculate_score()
+    print("\n==============================")
+    print("          GAME OVER")
+    print("==============================")
+    print(f"Reached Floor : {game.floor}")
+    print(f"Player Level  : {game.level}")
+    print(f"Final Status  : HP {game.player_max_hp} / MP {game.player_max_mp} / ATK {game.player.atk} / DEF {game.player.defense}")
+    print(f"Arcana Count  : {len(game.spells)}")
+    print(f"Score         : {score}")
+
+
 def main() -> None:
     signal.signal(signal.SIGINT, _handle_sigint)
-    game = Game()
+    difficulty = show_title_screen()
+    if difficulty is None:
+        print("Goodbye!")
+        return
+    game = Game(difficulty=difficulty)
+    game.log(f"Game started on {difficulty} difficulty.")
 
     while True:
         print(game.render())
@@ -863,7 +942,7 @@ def main() -> None:
         game.message_log.clear()
 
         if game.player.hp <= 0:
-            print("You died. Game Over.")
+            show_game_over_screen(game)
             break
         cmd = input("Command [w/a/s/d, t, ., i, u, k, h]: ").strip().lower()[:1]
         if not cmd:

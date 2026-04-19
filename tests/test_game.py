@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from game import BOSS, FLOOR, MINIBOSS, WALL, Entity, Game, Spell
+from game import BOSS, FLOOR, MINIBOSS, WALL, Entity, Game, Spell, show_title_screen
 
 
 class GameTests(unittest.TestCase):
@@ -257,6 +257,27 @@ class GameTests(unittest.TestCase):
         self.assertGreater(counts["Uncommon"], counts["Rare"])
         self.assertGreater(counts["Rare"], counts["Epic"])
         self.assertGreater(counts["Epic"], counts["Legendary"])
+
+    def test_calculate_score_reflects_floor_level_stats_and_arcana(self):
+        g = Game(seed=1)
+        g.floor = 8
+        g.level = 4
+        g.player_max_hp = 20
+        g.player_max_mp = 9
+        g.player.atk = 7
+        g.player.defense = 5
+        g.skill_tree["arcane"] = 2
+        g.spells = [Spell("Comet Missile", "Rare"), Spell("Flare Curtain", "Legendary")]
+
+        score = g.calculate_score()
+
+        self.assertGreater(score, 0)
+        self.assertEqual(score, g.calculate_score())
+
+    def test_title_screen_allows_difficulty_selection_then_start(self):
+        with patch("builtins.input", side_effect=["2", "3", "1"]):
+            difficulty = show_title_screen()
+        self.assertEqual(difficulty, "Hard")
 
     def test_floor_five_has_miniboss(self):
         g = Game(seed=1)
