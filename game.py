@@ -90,6 +90,9 @@ class Game:
         self.floor = 1
         self.moves = 0
         self.message_log: deque[str] = deque(maxlen=7)
+        self.turn_logs: deque[str] = deque(maxlen=10)
+        self._turn_event_buffer: List[str] = []
+        self._is_capturing_turn_events = False
         self.inventory: List[Tuple[str, str]] = []
         self.player = Entity(0, 0, hp=10, atk=3, defense=1)
         self.player_max_hp = 10
@@ -155,12 +158,34 @@ class Game:
             "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item,",
             "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
-            "System Commands: h=help",
+            "System Commands: h=help, l=turn log",
             "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, M=miniboss, B=boss, I=item, F=friendly, >=stairs",
         ]
 
     def log(self, msg: str) -> None:
         self.message_log.append(msg)
+        if self._is_capturing_turn_events:
+            self._turn_event_buffer.append(msg)
+
+    def start_turn_capture(self) -> None:
+        self._turn_event_buffer = []
+        self._is_capturing_turn_events = True
+
+    def finalize_turn_capture(self, cmd: str) -> None:
+        self._is_capturing_turn_events = False
+        if cmd in {"w", "a", "s", "d"} and not self._turn_event_buffer:
+            return
+        if not self._turn_event_buffer:
+            return
+        self.turn_logs.append(" / ".join(self._turn_event_buffer))
+
+    def show_turn_logs(self) -> None:
+        if not self.turn_logs:
+            self.log("Turn log: (empty)")
+            return
+        self.log("Turn log (oldest -> newest):")
+        for idx, entry in enumerate(self.turn_logs, start=1):
+            self.log(f"{idx}: {entry}")
 
     def random_empty_tile(self) -> Tuple[int, int]:
         for _ in range(1000):
@@ -1276,6 +1301,9 @@ class Game:
 
     def take_turn(self, cmd: str) -> bool:
         acted = False
+        acting_commands = {"w", "a", "s", "d", ".", "t", "u"}
+        if cmd in acting_commands:
+            self.start_turn_capture()
         if cmd == "w":
             self.move_player(0, -1)
             acted = True
@@ -1303,12 +1331,17 @@ class Game:
         elif cmd == "h":
             for line in self.help_lines():
                 self.log(line)
+        elif cmd == "l":
+            self.show_turn_logs()
         else:
             self.log("Invalid command.")
 
         if acted:
             self.moves += 1
             self.enemy_turn()
+            self.finalize_turn_capture(cmd)
+        else:
+            self._is_capturing_turn_events = False
 
         return True
 
@@ -1364,6 +1397,10 @@ def show_game_over_screen(game: Game) -> None:
     print(f"Score         : {score}")
 
 
+def clear_screen() -> None:
+    print("\033[2J\033[H", end="")
+
+
 def main() -> None:
     signal.signal(signal.SIGINT, _handle_sigint)
     difficulty = show_title_screen()
@@ -1374,6 +1411,7 @@ def main() -> None:
     game.log(f"Game started on {difficulty} difficulty.")
 
     while True:
+        clear_screen()
         print(game.render())
         for line in game.status_lines():
             print(line)
@@ -1385,7 +1423,7 @@ def main() -> None:
         if game.player.hp <= 0:
             show_game_over_screen(game)
             break
-        cmd = input("Command [w/a/s/d, t, ., i, u, k, h]: ").strip().lower()[:1]
+        cmd = input("Command [w/a/s/d, t, ., i, u, k, h, l]: ").strip().lower()[:1]
         if not cmd:
             continue
         game.take_turn(cmd)
