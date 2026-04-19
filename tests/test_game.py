@@ -434,6 +434,52 @@ class GameTests(unittest.TestCase):
         self.assertIn("ATK:", lines[2])
         self.assertIn("DEF:", lines[2])
 
+    def test_guardians_armor_stacks_on_wait_and_resets_on_move(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.defense = 10
+        g.enemies = []
+        g.items = []
+        g.friendlies = []
+        g.equip_accessory("Rare", "Guardian's Armor")
+
+        g.take_turn(".")
+        first_wait_def = g.player.defense
+        g.take_turn(".")
+        second_wait_def = g.player.defense
+        g.take_turn("d")
+
+        self.assertEqual(first_wait_def, 13)
+        self.assertEqual(second_wait_def, 18)
+        self.assertEqual(g.player.defense, 10)
+
+    def test_guardians_armor_uses_rarity_multiplier_table(self):
+        g = Game(seed=1)
+        g.player.defense = 20
+        g.equip_accessory("Legendary", "Guardian's Armor")
+
+        g.stack_guardian_armor_defense()
+
+        self.assertEqual(g.player.defense, 35)
+
+    def test_status_screen_shows_accessory_and_arcana_descriptions(self):
+        g = Game(seed=1)
+        g.equip_accessory("Epic", "Kote")
+        g.spells = [Spell("Healing", "Rare")]
+
+        g.show_status_details()
+        text = "\n".join(g.message_log)
+
+        self.assertIn("=== Status Details ===", text)
+        self.assertIn("Accessory: Epic Kote", text)
+        self.assertIn("Raises ATK and DEF while equipped.", text)
+        self.assertIn("Arcana: Rare Healing", text)
+        self.assertIn("Consumes MP to restore your HP.", text)
+
     def test_legendary_item_is_stronger_than_common_item(self):
         g = Game(seed=1)
         g.player.hp = 1
