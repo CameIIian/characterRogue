@@ -112,11 +112,11 @@ class Game:
     @staticmethod
     def rarity_tiers() -> List[Tuple[str, int]]:
         return [
-            ("Common", 50),
-            ("Uncommon", 28),
-            ("Rare", 14),
-            ("Epic", 6),
-            ("Legendary", 2),
+            ("Common", 60),
+            ("Uncommon", 30),
+            ("Rare", 7),
+            ("Epic", 2),
+            ("Legendary", 1),
         ]
 
     @staticmethod
@@ -369,28 +369,44 @@ class Game:
             return
 
         rarity, kind = self.inventory.pop(0)
-        rarity_bonus = {
-            "Common": 0,
-            "Uncommon": 1,
-            "Rare": 2,
-            "Epic": 4,
-            "Legendary": 6,
-        }.get(rarity, 0)
+        potion_scaling = {
+            "Common": (0.20, 5),
+            "Uncommon": (0.40, 10),
+            "Rare": (0.60, 15),
+            "Epic": (0.80, 20),
+            "Legendary": (2.00, 100),
+        }
+        ether_scaling = {
+            "Common": (0.20, 3),
+            "Uncommon": (0.40, 6),
+            "Rare": (0.60, 12),
+            "Epic": (0.80, 24),
+            "Legendary": (2.00, 50),
+        }
+        power_shield_gain = {
+            "Common": 1,
+            "Uncommon": 2,
+            "Rare": 4,
+            "Epic": 8,
+            "Legendary": 16,
+        }
 
         if kind == "Potion":
-            restore = 4 + (rarity_bonus * 2)
+            ratio, minimum = potion_scaling.get(rarity, (0.20, 5))
+            restore = max(minimum, int(self.player_max_hp * ratio))
             self.player.hp = min(self.player_max_hp, self.player.hp + restore)
             self.log(f"You used {rarity} Potion and restored {restore} HP.")
         elif kind == "Power":
-            gain = 1 + (rarity_bonus // 2)
+            gain = power_shield_gain.get(rarity, 1)
             self.player.atk += gain
             self.log(f"You used {rarity} Power and gained +{gain} ATK.")
         elif kind == "Shield":
-            gain = 1 + (rarity_bonus // 2)
+            gain = power_shield_gain.get(rarity, 1)
             self.player.defense += gain
             self.log(f"You used {rarity} Shield and gained +{gain} DEF.")
         elif kind == "Ether":
-            restore = 3 + (rarity_bonus * 2)
+            ratio, minimum = ether_scaling.get(rarity, (0.20, 3))
+            restore = max(minimum, int(self.player_max_mp * ratio))
             self.player_mp = min(self.player_max_mp, self.player_mp + restore)
             self.log(f"You used {rarity} Ether and restored {restore} MP.")
 
