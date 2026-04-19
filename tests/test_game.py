@@ -215,13 +215,10 @@ class GameTests(unittest.TestCase):
 
         self.assertIn(FRIENDLY, rendered)
 
-    def test_generate_floor_spawns_three_friendly_roles(self):
+    def test_generate_floor_spawns_at_most_one_friendly(self):
         g = Game(seed=1)
 
-        roles = sorted(f.role for f in g.friendlies)
-
-        self.assertEqual(len(g.friendlies), 3)
-        self.assertEqual(roles, ["maze traveler", "merchant", "technician"])
+        self.assertLessEqual(len(g.friendlies), 1)
 
     def test_turn_log_skips_move_only_turn(self):
         g = Game(seed=1, width=7, height=7)
@@ -622,6 +619,36 @@ class GameTests(unittest.TestCase):
 
         self.assertTrue(f.traded)
         self.assertEqual(g.inventory, inventory_after_first_trade)
+
+    def test_friendly_demon_trade_sacrifices_hp_and_splits_stats(self):
+        g = Game(seed=1)
+        demon = FriendlyEntity(1, 1, role="friendly demon", traded=False)
+        g.friendlies = [demon]
+        g.player.hp = 10
+        g.player.atk = 3
+        g.player.defense = 2
+
+        with patch("builtins.input", side_effect=["4", "1"]):
+            g.trade_with_friendly(demon)
+
+        self.assertTrue(demon.traded)
+        self.assertEqual(g.player.hp, 6)
+        self.assertEqual(g.player.atk, 4)
+        self.assertEqual(g.player.defense, 5)
+
+    def test_friendly_roles_spawn_only_once_per_10_floor_cycle(self):
+        g = Game(seed=1)
+        g.friendlies = []
+
+        spawn_rolls = [5, 5, 1, 1]
+        with patch.object(g, "random_empty_tile", return_value=(1, 1)), patch.object(g.rng, "randint", side_effect=spawn_rolls):
+            for floor in range(1, 11):
+                g.floor = floor
+                g.friendlies = []
+                g.maybe_spawn_friendly()
+
+        spawned_roles = sorted(g.spawned_friendly_roles_in_cycle)
+        self.assertEqual(spawned_roles, ["friendly demon", "maze traveler", "merchant", "technician"])
 
     def test_technician_trades_item_for_arcana(self):
         g = Game(seed=1)
