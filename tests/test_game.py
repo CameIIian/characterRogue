@@ -259,6 +259,36 @@ class GameTests(unittest.TestCase):
 
         self.assertEqual(len(g.turn_logs), 10)
 
+    def test_vampires_fang_converts_hp_overflow_to_mp(self):
+        g = Game(seed=1)
+        g.player_max_hp = 20
+        g.player.hp = 18
+        g.player_max_mp = 10
+        g.player_mp = 4
+        g.equipped_accessory = ("Rare", "Vampire's Fang")
+
+        healed, converted_mp = g.restore_hp(10)
+
+        self.assertEqual(healed, 2)
+        self.assertEqual(converted_mp, 4)  # (10 - 2) * 0.60 = 4.8 -> 4
+        self.assertEqual(g.player.hp, 20)
+        self.assertEqual(g.player_mp, 8)
+
+    def test_dark_wizards_staff_converts_mp_overflow_to_hp(self):
+        g = Game(seed=1)
+        g.player_max_mp = 10
+        g.player_mp = 9
+        g.player_max_hp = 25
+        g.player.hp = 10
+        g.equipped_accessory = ("Epic", "Dark Wizard's Staff")
+
+        restored, converted_hp = g.restore_mp(6)
+
+        self.assertEqual(restored, 1)
+        self.assertEqual(converted_hp, 4)  # (6 - 1) * 0.80 = 4
+        self.assertEqual(g.player_mp, 10)
+        self.assertEqual(g.player.hp, 14)
+
     def test_comet_missile_hits_straight_line_enemy(self):
         g = Game(seed=1, width=7, height=7)
         g.board = [[WALL for _ in range(7)] for _ in range(7)]
