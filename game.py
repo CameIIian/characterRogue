@@ -165,7 +165,7 @@ class Game:
     ARCANA_DESCRIPTIONS = {
         "Comet Missile": "Fires a line attack at one directional target.",
         "Flare Curtain": "Hits every enemy adjacent to you.",
-        "God's Wrath": "A two-turn chant that unleashes heavy single-target damage.",
+        "God's Wrath": "Consumes MP to stack charges that empower your next normal attack.",
         "Healing": "Consumes MP to restore your HP.",
         "Vampire Kiss": "Damages one adjacent enemy and drains HP.",
         "Frugal soul": "Your next item may be preserved instead of consumed.",
@@ -221,6 +221,8 @@ class Game:
         self.skill_points = 0
         self.spells: List[Spell] = []
         self.pending_chant_spell: Optional[Spell] = None
+        self.gods_wrath_charge_count = 0
+        self.gods_wrath_charge_multiplier = 1.0
         self.next_floor_destination: Optional[int] = None
         self.friendly_spawn_cycle_index = self.current_cycle()
         self.spawned_friendly_roles_in_cycle: set[str] = set()
@@ -1329,7 +1331,18 @@ class Game:
         return True
 
     def combat(self, enemy: Entity) -> None:
-        dmg = self.damage(self.player_attack_value(), enemy.defense)
+        base_dmg = self.damage(self.player_attack_value(), enemy.defense)
+        if self.gods_wrath_charge_count > 0:
+            charged_multiplier = self.gods_wrath_charge_multiplier ** self.gods_wrath_charge_count
+            dmg = max(1, int(base_dmg * charged_multiplier))
+            self.log(
+                "God's Wrath empowers your attack! "
+                f"x{charged_multiplier:.2f} ({self.gods_wrath_charge_count} charge)."
+            )
+            self.gods_wrath_charge_count = 0
+            self.gods_wrath_charge_multiplier = 1.0
+        else:
+            dmg = base_dmg
         self.log(f"You hit the enemy for {dmg} damage.")
         self.apply_damage_with_chain(enemy, dmg, allow_gunpowder=True)
         return
@@ -1389,10 +1402,6 @@ class Game:
             self.log("Magic locked. Learn Arcane in skill tree.")
             return False
 
-        if self.pending_chant_spell and self.pending_chant_spell.name == "God's Wrath":
-            self.pending_chant_spell = None
-            return self.cast_gods_wrath(ready=True)
-
         spell = self.choose_spell()
         if spell is None:
             return False
@@ -1401,9 +1410,7 @@ class Game:
         if spell.name == "Flare Curtain":
             return self.cast_flare_curtain(spell)
         if spell.name == "God's Wrath":
-            self.pending_chant_spell = spell
-            self.log(f"You begin chanting {spell.rarity} God's Wrath...")
-            return True
+            return self.cast_gods_wrath()
         if spell.name == "Healing":
             return self.cast_healing(spell)
         if spell.name == "Vampire Kiss":
@@ -1655,7 +1662,7 @@ class Game:
         self.log(f"MP -{mp_cost}.")
         return True
 
-    def cast_gods_wrath(self, ready: bool = False) -> bool:
+    def cast_gods_wrath(self) -> bool:
         spell = next((s for s in reversed(self.spells) if s.name == "God's Wrath"), None)
         if spell is None:
             self.log("You do not know God's Wrath.")
@@ -1666,20 +1673,14 @@ class Game:
         if self.player_mp < mp_cost:
             self.log(f"Not enough MP. Need {mp_cost} MP.")
             return False
-        if not self.enemies:
-            self.log("No target for God's Wrath.")
-            return False
-
-        if not ready:
-            self.pending_chant_spell = spell
-            self.log(f"You begin chanting {spell.rarity} God's Wrath...")
-            return True
-
-        target = max(self.enemies, key=lambda e: (e.hp, -abs(e.x - self.player.x) - abs(e.y - self.player.y)))
         self.player_mp -= mp_cost
-        base = self.damage(self.player_attack_value(), target.defense)
-        dmg = max(1, int(base * 1.5 * self.spell_power_multiplier(spell.rarity)))
-        self.apply_spell_damage(target, dmg, f"{spell.rarity} God's Wrath")
+        self.gods_wrath_charge_count += 1
+        self.gods_wrath_charge_multiplier = 1.5 * self.spell_power_multiplier(spell.rarity)
+        boosted = self.gods_wrath_charge_multiplier ** self.gods_wrath_charge_count
+        self.log(
+            f"{spell.rarity} God's Wrath charge +1 "
+            f"(total {self.gods_wrath_charge_count}, next normal attack x{boosted:.2f})."
+        )
         self.log(f"MP -{mp_cost}.")
         return True
 
