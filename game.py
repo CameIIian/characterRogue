@@ -51,6 +51,24 @@ class FriendlyEntity:
 
 
 class Game:
+    CONSUMABLE_ITEM_KINDS = [
+        "Potion",
+        "Power",
+        "Shield",
+        "Ether",
+        "Throwing axe",
+        "Bomb",
+    ]
+    ACCESSORY_ITEM_KINDS = [
+        "Lucky amulet",
+        "Kote",
+        "Vampire's Fang",
+        "Dark Wizard's Staff",
+        "Guardian's Armor",
+        "Berserker's club",
+        "Roller shoes",
+        "Gunpowder box",
+    ]
     ITEM_DAMAGE_RATIOS = {
         "Throwing axe": {
             "Common": 0.20,
@@ -482,24 +500,12 @@ class Game:
 
 
     def random_item_kind(self) -> str:
-        return self.rng.choice(
-            [
-                "Potion",
-                "Power",
-                "Shield",
-                "Ether",
-                "Throwing axe",
-                "Bomb",
-                "Lucky amulet",
-                "Kote",
-                "Vampire's Fang",
-                "Dark Wizard's Staff",
-                "Guardian's Armor",
-                "Berserker's club",
-                "Roller shoes",
-                "Gunpowder box",
-            ]
-        )
+        # Accessories should appear around one-third as often as consumables
+        # when rolling from generic item drops.
+        roll = self.rng.randint(1, 4)
+        if roll <= 3:
+            return self.rng.choice(self.CONSUMABLE_ITEM_KINDS)
+        return self.rng.choice(self.ACCESSORY_ITEM_KINDS)
 
     def is_guardian_armor_equipped(self) -> bool:
         return self.equipped_accessory is not None and self.equipped_accessory[1] == "Guardian's Armor"
