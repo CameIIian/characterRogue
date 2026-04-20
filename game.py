@@ -10,6 +10,7 @@ WALL = "#"
 FLOOR = "."
 PLAYER = "@"
 ENEMY = "E"
+FORTIFIED_ENEMY = "e"
 MINIBOSS = "M"
 BOSS = "B"
 ITEM = "I"
@@ -223,6 +224,8 @@ class Game:
         self.next_floor_destination: Optional[int] = None
         self.friendly_spawn_cycle_index = self.current_cycle()
         self.spawned_friendly_roles_in_cycle: set[str] = set()
+        self.fortified_spawn_cycle_index = self.current_cycle()
+        self.fortified_spawned_in_cycle = False
 
         self.skill_tree = {
             "vitality": 0,
@@ -276,7 +279,7 @@ class Game:
             "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
             "System Commands: h=help, l=turn log, p=status details",
-            "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, M=miniboss, B=boss, I=item, F=friendly, >=stairs",
+            "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, e=fortified, M=miniboss, B=boss, I=item, F=friendly, >=stairs",
         ]
 
     def log(self, msg: str) -> None:
@@ -434,6 +437,7 @@ class Game:
                 )
             )
             self.log("The Great Boss awaits. Defeat it to unlock the stairs.")
+        self.maybe_spawn_fortified_enemy(enemy_atk)
 
         item_count = min(1 + self.floor // 2, 4)
         self.floor_clear_bonus_granted = False
@@ -473,6 +477,8 @@ class Game:
                 temp[e.y][e.x] = MINIBOSS
             elif e.kind == "boss":
                 temp[e.y][e.x] = BOSS
+            elif e.kind == "fortified":
+                temp[e.y][e.x] = FORTIFIED_ENEMY
             else:
                 temp[e.y][e.x] = ENEMY
         temp[self.player.y][self.player.x] = PLAYER
@@ -688,6 +694,33 @@ class Game:
         if self.friendly_spawn_cycle_index != current_cycle:
             self.friendly_spawn_cycle_index = current_cycle
             self.spawned_friendly_roles_in_cycle = set()
+
+    def refresh_fortified_spawn_cycle(self) -> None:
+        current_cycle = self.current_cycle()
+        if self.fortified_spawn_cycle_index != current_cycle:
+            self.fortified_spawn_cycle_index = current_cycle
+            self.fortified_spawned_in_cycle = False
+
+    def maybe_spawn_fortified_enemy(self, baseline_atk: int) -> None:
+        self.refresh_fortified_spawn_cycle()
+        if self.fortified_spawned_in_cycle:
+            return
+        if self.rng.randint(1, 100) != 1:
+            return
+        ex, ey = self.random_empty_tile()
+        cycle = self.current_cycle()
+        self.enemies.append(
+            Entity(
+                ex,
+                ey,
+                hp=max(10, 8 + self.floor + (cycle * 3)),
+                atk=0,
+                defense=max(20, baseline_atk * 3),
+                kind="fortified",
+            )
+        )
+        self.fortified_spawned_in_cycle = True
+        self.log("A fortified enemy appears. It hardly takes damage but gives massive XP.")
 
     def maybe_spawn_friendly(self) -> None:
         self.refresh_friendly_spawn_cycle()
@@ -1334,6 +1367,9 @@ class Game:
             self.log("A legendary treasure chest drops where the boss fell.")
             self.boss_laser_targets = []
             xp_gain = 24 + self.floor
+        elif enemy.kind == "fortified":
+            self.log(defeat_log or "Fortified enemy defeated.")
+            xp_gain = 40 + (self.floor * 2)
         else:
             self.log(defeat_log or "Enemy defeated.")
             xp_gain = 3 + self.floor
@@ -1580,6 +1616,8 @@ class Game:
             if enemy.kind == "boss":
                 self.boss_turn(enemy)
                 continue
+            if enemy.kind == "fortified":
+                continue
             if abs(enemy.x - self.player.x) + abs(enemy.y - self.player.y) == 1:
                 dmg = self.damage(enemy.atk, self.player.defense)
                 self.player.hp -= dmg
@@ -1626,7 +1664,7 @@ class Game:
                 self.log(f"The Great Boss summons {summoned} elite minions!")
         else:
             self.boss_laser_targets = self.collect_boss_laser_tiles(boss)
-            self.log("The Great Boss marks cardinal and diagonal lines for a laser strike!")
+            self.log("The Great Boss marks cardinal lines for a laser strike!")
 
     def boss_attack_or_move(self, boss: Entity) -> None:
         if abs(boss.x - self.player.x) + abs(boss.y - self.player.y) == 1:
@@ -1695,10 +1733,6 @@ class Game:
             (0, 1),
             (-1, 0),
             (1, 0),
-            (-1, -1),
-            (1, -1),
-            (-1, 1),
-            (1, 1),
         ]:
             x, y = boss.x + dx, boss.y + dy
             while 0 <= x < self.width and 0 <= y < self.height and self.board[y][x] != WALL:

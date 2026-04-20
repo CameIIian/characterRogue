@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from game import BOSS, FLOOR, FRIENDLY, MINIBOSS, WALL, Entity, FriendlyEntity, Game, Spell, show_title_screen
+from game import BOSS, FLOOR, FORTIFIED_ENEMY, FRIENDLY, MINIBOSS, WALL, Entity, FriendlyEntity, Game, Spell, show_title_screen
 
 
 class GameTests(unittest.TestCase):
@@ -199,6 +199,22 @@ class GameTests(unittest.TestCase):
         self.assertIn(MINIBOSS, rendered)
         self.assertIn(BOSS, rendered)
 
+    def test_render_shows_fortified_enemy_icon(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 1, 1
+        g.stairs = (3, 1)
+        g.items = []
+        g.friendlies = []
+        g.enemies = [Entity(2, 2, hp=30, atk=0, defense=99, kind="fortified")]
+
+        rendered = g.render()
+
+        self.assertIn(FORTIFIED_ENEMY, rendered)
+
     def test_render_shows_friendly_icon(self):
         g = Game(seed=1)
         g.board = [[WALL for _ in range(5)] for _ in range(5)]
@@ -219,6 +235,32 @@ class GameTests(unittest.TestCase):
         g = Game(seed=1)
 
         self.assertLessEqual(len(g.friendlies), 1)
+
+    def test_fortified_enemy_does_not_attack(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        g.player.hp = 10
+        g.enemies = [Entity(3, 2, hp=20, atk=999, defense=99, kind="fortified")]
+        g.enemy_turn()
+
+        self.assertEqual(g.player.hp, 10)
+
+    def test_boss_laser_marks_only_cardinal_lines(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        boss = Entity(3, 3, hp=20, atk=10, defense=3, kind="boss")
+        targets = g.collect_boss_laser_tiles(boss)
+
+        self.assertIn((3, 1), targets)
+        self.assertIn((1, 3), targets)
+        self.assertNotIn((1, 1), targets)
 
     def test_turn_log_skips_move_only_turn(self):
         g = Game(seed=1, width=7, height=7)
