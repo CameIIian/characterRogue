@@ -547,11 +547,17 @@ class Game:
             return 0.0
         return self.OVERFLOW_CONVERSION_BY_RARITY.get(rarity, 0.20)
 
+    @staticmethod
+    def _split_restoration(raw_amount: int, current: int, maximum: int) -> Tuple[int, int]:
+        if raw_amount <= 0:
+            return 0, 0
+        effective = min(raw_amount, max(0, maximum - current))
+        overflow = raw_amount - effective
+        return effective, overflow
+
     def restore_hp(self, amount: int) -> Tuple[int, int]:
-        hp_before = self.player.hp
-        self.player.hp = min(self.player_max_hp, self.player.hp + amount)
-        healed = self.player.hp - hp_before
-        overflow = max(0, amount - healed)
+        healed, overflow = self._split_restoration(amount, self.player.hp, self.player_max_hp)
+        self.player.hp += healed
         converted_mp = 0
         if (
             overflow > 0
@@ -560,22 +566,18 @@ class Game:
         ):
             rarity, kind = self.equipped_accessory
             ratio = self.accessory_overflow_ratio(kind, rarity)
-            mp_gain = int(overflow * ratio)
-            if mp_gain > 0:
-                mp_before = self.player_mp
-                self.player_mp = min(self.player_max_mp, self.player_mp + mp_gain)
-                converted_mp = self.player_mp - mp_before
-                if converted_mp > 0:
-                    self.log(
-                        f"{rarity} Vampire's Fang converted {overflow} overflow HP into {converted_mp} MP."
-                    )
+            mp_raw = int(overflow * ratio)
+            converted_mp, _ = self._split_restoration(mp_raw, self.player_mp, self.player_max_mp)
+            self.player_mp += converted_mp
+            if converted_mp > 0:
+                self.log(
+                    f"{rarity} Vampire's Fang converted {overflow} overflow HP into {converted_mp} MP."
+                )
         return healed, converted_mp
 
     def restore_mp(self, amount: int) -> Tuple[int, int]:
-        mp_before = self.player_mp
-        self.player_mp = min(self.player_max_mp, self.player_mp + amount)
-        restored = self.player_mp - mp_before
-        overflow = max(0, amount - restored)
+        restored, overflow = self._split_restoration(amount, self.player_mp, self.player_max_mp)
+        self.player_mp += restored
         converted_hp = 0
         if (
             overflow > 0
@@ -584,15 +586,13 @@ class Game:
         ):
             rarity, kind = self.equipped_accessory
             ratio = self.accessory_overflow_ratio(kind, rarity)
-            hp_gain = int(overflow * ratio)
-            if hp_gain > 0:
-                hp_before = self.player.hp
-                self.player.hp = min(self.player_max_hp, self.player.hp + hp_gain)
-                converted_hp = self.player.hp - hp_before
-                if converted_hp > 0:
-                    self.log(
-                        f"{rarity} Dark Wizard's Staff converted {overflow} overflow MP into {converted_hp} HP."
-                    )
+            hp_raw = int(overflow * ratio)
+            converted_hp, _ = self._split_restoration(hp_raw, self.player.hp, self.player_max_hp)
+            self.player.hp += converted_hp
+            if converted_hp > 0:
+                self.log(
+                    f"{rarity} Dark Wizard's Staff converted {overflow} overflow MP into {converted_hp} HP."
+                )
         return restored, converted_hp
 
     def apply_accessory_effect(self, rarity: str, kind: str) -> None:
