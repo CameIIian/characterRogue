@@ -135,6 +135,36 @@ class GameTests(unittest.TestCase):
         self.assertLess(g.player_mp, 5)
         self.assertLess(enemy.hp, 20)
 
+    def test_flare_curtain_hits_all_8_surrounding_tiles(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 3, 3
+        g.player.atk = 5
+        g.player_mp = 10
+        g.spells = [Spell("Flare Curtain", "Common")]
+        targets = [
+            Entity(2, 2, hp=10, atk=1, defense=0),
+            Entity(3, 2, hp=10, atk=1, defense=0),
+            Entity(4, 2, hp=10, atk=1, defense=0),
+            Entity(2, 3, hp=10, atk=1, defense=0),
+            Entity(4, 3, hp=10, atk=1, defense=0),
+            Entity(2, 4, hp=10, atk=1, defense=0),
+            Entity(3, 4, hp=10, atk=1, defense=0),
+            Entity(4, 4, hp=10, atk=1, defense=0),
+            Entity(1, 1, hp=10, atk=1, defense=0),
+        ]
+        g.enemies = targets
+
+        used = g.use_technique()
+
+        self.assertTrue(used)
+        for enemy in targets[:-1]:
+            self.assertLess(enemy.hp, 10)
+        self.assertEqual(targets[-1].hp, 10)
+
     def test_open_skill_menu_uses_input_choice(self):
         g = Game(seed=1)
         g.skill_points = 1
@@ -586,26 +616,31 @@ class GameTests(unittest.TestCase):
         self.assertLess(right_enemy.hp, 10)
         self.assertEqual(up_enemy.hp, 10)
 
-    def test_gods_wrath_requires_one_turn_chant(self):
+    def test_gods_wrath_can_charge_multiple_times_and_empowers_next_normal_attack(self):
         g = Game(seed=1)
         g.board = [[WALL for _ in range(5)] for _ in range(5)]
         for y in range(1, 4):
             for x in range(1, 4):
                 g.board[y][x] = FLOOR
         g.player.x, g.player.y = 2, 2
+        g.player.atk = 6
         g.player_mp = 10
         g.spells = [Spell("God's Wrath", "Common")]
-        g.enemies = [Entity(2, 1, hp=10, atk=1, defense=0), Entity(1, 2, hp=20, atk=1, defense=0)]
+        target = Entity(2, 1, hp=200, atk=1, defense=0)
+        g.enemies = [target]
 
-        first = g.use_technique()
-        hp_before = max(e.hp for e in g.enemies)
-        second = g.use_technique()
-        hp_after = max(e.hp for e in g.enemies)
+        first_charge = g.use_technique()
+        second_charge = g.use_technique()
+        hp_before_attack = target.hp
+        g.attack_adjacent()
+        hp_after_attack = target.hp
 
-        self.assertTrue(first)
-        self.assertTrue(second)
-        self.assertEqual(hp_before, 20)
-        self.assertLess(hp_after, hp_before)
+        expected_damage = int(g.damage(g.player.atk, target.defense) * ((1.5 * 1.0) ** 2))
+        self.assertTrue(first_charge)
+        self.assertTrue(second_charge)
+        self.assertEqual(g.player_mp, 2)
+        self.assertEqual(g.gods_wrath_charge_count, 0)
+        self.assertEqual(hp_before_attack - hp_after_attack, expected_damage)
 
     def test_status_lines_layout_matches_expected_order(self):
         g = Game(seed=1)
