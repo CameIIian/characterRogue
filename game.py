@@ -768,6 +768,35 @@ class Game:
             self.roll_item_rarity(),
         )
 
+    def random_arcana_with_rarity(self, rarity: str) -> Spell:
+        return Spell(
+            self.rng.choice(
+                ["Comet Missile", "Flare Curtain", "God's Wrath", "Healing", "Vampire Kiss", "Frugal soul"]
+            ),
+            rarity,
+        )
+
+    def roll_trade_rarity_by_offer_count(self, offered_count: int) -> str:
+        if offered_count <= 0:
+            return "Common"
+
+        trade_tiers_by_offer_count = {
+            1: [("Common", 20), ("Uncommon", 30), ("Rare", 30), ("Epic", 15), ("Legendary", 5)],
+            2: [("Common", 12), ("Uncommon", 25), ("Rare", 35), ("Epic", 20), ("Legendary", 8)],
+            3: [("Common", 8), ("Uncommon", 18), ("Rare", 36), ("Epic", 26), ("Legendary", 12)],
+            4: [("Common", 4), ("Uncommon", 12), ("Rare", 34), ("Epic", 32), ("Legendary", 18)],
+            5: [("Common", 2), ("Uncommon", 8), ("Rare", 28), ("Epic", 36), ("Legendary", 26)],
+        }
+        trade_tiers = trade_tiers_by_offer_count[min(5, offered_count)]
+        total_weight = sum(weight for _, weight in trade_tiers)
+        pick = self.rng.randint(1, total_weight)
+        cumulative = 0
+        for rarity, weight in trade_tiers:
+            cumulative += weight
+            if pick <= cumulative:
+                return rarity
+        return "Rare"
+
     def trade_with_friendly(self, friendly: FriendlyEntity) -> None:
         if friendly.role == "merchant":
             self.trade_with_merchant(friendly)
@@ -788,33 +817,51 @@ class Game:
             self.log("Merchant: We've already traded on this floor.")
             return
         if not self.inventory:
-            self.log("Merchant: Bring me an item and we can trade.")
+            gift_kind = self.random_item_kind()
+            self.inventory.append(("Common", gift_kind))
+            friendly.traded = True
+            self.log("Merchant: You're empty-handed? I'll invest in your journey this once.")
+            self.log(f"Merchant gift: Common {gift_kind}.")
             return
-        item_index = self.choose_inventory_index()
-        if item_index is None:
+        offered_indices = self.choose_trade_item_indices(max_items=5)
+        if offered_indices is None:
             return
 
-        offered_rarity, offered_kind = self.inventory.pop(item_index)
+        offered_items = [self.inventory[idx] for idx in offered_indices]
+        for idx in sorted(offered_indices, reverse=True):
+            self.inventory.pop(idx)
+
         new_kind = self.random_item_kind()
-        new_rarity = self.roll_trade_rarity()
+        new_rarity = self.roll_trade_rarity_by_offer_count(len(offered_items))
         self.inventory.append((new_rarity, new_kind))
         friendly.traded = True
-        self.log(f"Merchant trade: {offered_rarity} {offered_kind} -> {new_rarity} {new_kind}.")
+        offered_text = ", ".join([f"{rarity} {kind}" for rarity, kind in offered_items])
+        self.log(f"Merchant trade ({len(offered_items)} offered): {offered_text} -> {new_rarity} {new_kind}.")
 
     def trade_with_technician(self, friendly: FriendlyEntity) -> None:
         if friendly.traded:
             self.log("Technician: I already calibrated your gear on this floor.")
             return
         if not self.inventory:
-            self.log("Technician: Bring any item and I'll convert it into Arcana data.")
+            gift_spell = self.random_arcana_with_rarity("Common")
+            self.acquire_arcana(gift_spell)
+            friendly.traded = True
+            self.log("Technician: No materials? I'll provide a starter Arcana sample.")
             return
-        item_index = self.choose_inventory_index()
-        if item_index is None:
+        offered_indices = self.choose_trade_item_indices(max_items=5)
+        if offered_indices is None:
             return
 
-        offered_rarity, offered_kind = self.inventory.pop(item_index)
-        new_spell = self.random_arcana()
-        self.log(f"Technician trade: {offered_rarity} {offered_kind} -> {new_spell.rarity} {new_spell.name} Arcana.")
+        offered_items = [self.inventory[idx] for idx in offered_indices]
+        for idx in sorted(offered_indices, reverse=True):
+            self.inventory.pop(idx)
+
+        trade_rarity = self.roll_trade_rarity_by_offer_count(len(offered_items))
+        new_spell = self.random_arcana_with_rarity(trade_rarity)
+        offered_text = ", ".join([f"{rarity} {kind}" for rarity, kind in offered_items])
+        self.log(
+            f"Technician trade ({len(offered_items)} offered): {offered_text} -> {new_spell.rarity} {new_spell.name} Arcana."
+        )
         self.acquire_arcana(new_spell)
         friendly.traded = True
 
@@ -904,6 +951,39 @@ class Game:
             self.log("Invalid item choice.")
             return None
         return item_index
+
+    def choose_trade_item_indices(self, max_items: int = 5) -> Optional[List[int]]:
+        if not self.inventory:
+            return []
+        upper_bound = min(max_items, len(self.inventory))
+        if upper_bound == 1:
+            return [0]
+
+        print("Choose items to offer:")
+        for idx, (rarity, kind) in enumerate(self.inventory, start=1):
+            print(f"{idx}: {rarity} {kind}")
+
+        offered_count_text = input(f"Offer how many items [1-{upper_bound}, other=cancel]: ").strip()
+        if not offered_count_text.isdigit():
+            self.log("Trade cancelled.")
+            return None
+        offered_count = int(offered_count_text)
+        if offered_count < 1 or offered_count > upper_bound:
+            self.log("Invalid offered item count.")
+            return None
+
+        selected_indices: List[int] = []
+        for offer_index in range(offered_count):
+            choice = input(f"Select offer item {offer_index + 1}/{offered_count} [number, other=cancel]: ").strip()
+            if not choice.isdigit():
+                self.log("Trade cancelled.")
+                return None
+            item_index = int(choice) - 1
+            if not (0 <= item_index < len(self.inventory)) or item_index in selected_indices:
+                self.log("Invalid item choice.")
+                return None
+            selected_indices.append(item_index)
+        return selected_indices
 
     def find_prioritized_item_index(self) -> Optional[int]:
         for idx, (_, kind) in enumerate(self.inventory):

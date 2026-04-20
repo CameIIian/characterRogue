@@ -809,7 +809,9 @@ class GameTests(unittest.TestCase):
         technician = FriendlyEntity(1, 1, role="technician", traded=False)
         g.friendlies = [technician]
 
-        with patch.object(g.rng, "choice", return_value="Healing"), patch.object(g, "roll_item_rarity", return_value="Epic"):
+        with patch.object(g.rng, "choice", return_value="Healing"), patch.object(
+            g, "roll_trade_rarity_by_offer_count", return_value="Epic"
+        ):
             g.trade_with_friendly(technician)
 
         self.assertTrue(technician.traded)
@@ -955,11 +957,59 @@ class GameTests(unittest.TestCase):
         merchant = FriendlyEntity(1, 1, role="merchant", traded=False)
 
         with patch("builtins.input", return_value="1"), patch.object(g, "random_item_kind", return_value="Kote"), patch.object(
-            g, "roll_trade_rarity", return_value="Epic"
+            g, "roll_trade_rarity_by_offer_count", return_value="Epic"
         ):
             g.trade_with_friendly(merchant)
 
         self.assertIn(("Epic", "Kote"), g.inventory)
+
+    def test_merchant_trade_accepts_up_to_five_items(self):
+        g = Game(seed=1)
+        g.inventory = [
+            ("Common", "Potion"),
+            ("Uncommon", "Shield"),
+            ("Rare", "Power"),
+            ("Epic", "Ether"),
+            ("Legendary", "Bomb"),
+            ("Common", "Throwing axe"),
+        ]
+        merchant = FriendlyEntity(1, 1, role="merchant", traded=False)
+
+        with patch("builtins.input", side_effect=["5", "1", "2", "3", "4", "5"]), patch.object(
+            g, "random_item_kind", return_value="Kote"
+        ), patch.object(g, "roll_trade_rarity_by_offer_count", return_value="Legendary") as rarity_mock:
+            g.trade_with_friendly(merchant)
+
+        self.assertTrue(merchant.traded)
+        rarity_mock.assert_called_once_with(5)
+        self.assertEqual(len(g.inventory), 2)
+        self.assertIn(("Common", "Throwing axe"), g.inventory)
+        self.assertIn(("Legendary", "Kote"), g.inventory)
+
+    def test_technician_trade_without_inventory_grants_common_arcana(self):
+        g = Game(seed=1)
+        g.inventory = []
+        technician = FriendlyEntity(1, 1, role="technician", traded=False)
+
+        with patch.object(g.rng, "choice", return_value="Healing"):
+            g.trade_with_friendly(technician)
+
+        self.assertTrue(technician.traded)
+        self.assertEqual(len(g.spells), 1)
+        self.assertEqual((g.spells[0].name, g.spells[0].rarity), ("Healing", "Common"))
+        self.assertIn("starter Arcana sample", "\n".join(g.message_log))
+
+    def test_merchant_trade_without_inventory_grants_common_item(self):
+        g = Game(seed=1)
+        g.inventory = []
+        merchant = FriendlyEntity(1, 1, role="merchant", traded=False)
+
+        with patch.object(g, "random_item_kind", return_value="Potion"):
+            g.trade_with_friendly(merchant)
+
+        self.assertTrue(merchant.traded)
+        self.assertEqual(g.inventory, [("Common", "Potion")])
+        self.assertIn("empty-handed", "\n".join(g.message_log))
 
     def test_floor_five_has_miniboss(self):
         g = Game(seed=1)
