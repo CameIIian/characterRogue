@@ -996,6 +996,28 @@ class GameTests(unittest.TestCase):
         self.assertEqual(g.player_mp, 6)
         self.assertEqual(g.equipped_accessory, ("Common", "Lucky amulet"))
 
+    def test_item_drop_accessory_pool_includes_berserkers_club(self):
+        g = Game(seed=1)
+
+        self.assertIn("Berserker's club", g.ACCESSORY_ITEM_KINDS)
+
+    def test_item_drop_accessory_rate_is_about_one_third_of_consumables(self):
+        g = Game(seed=123)
+        rolls = 20000
+        accessory_count = 0
+        consumable_count = 0
+
+        for _ in range(rolls):
+            kind = g.random_item_kind()
+            if kind in g.ACCESSORY_ITEM_KINDS:
+                accessory_count += 1
+            elif kind in g.CONSUMABLE_ITEM_KINDS:
+                consumable_count += 1
+
+        self.assertGreater(consumable_count, 0)
+        ratio = accessory_count / consumable_count
+        self.assertAlmostEqual(ratio, 1 / 3, delta=0.05)
+
     def test_roller_shoes_can_chain_two_steps(self):
         g = Game(seed=1, width=7, height=7)
         g.board = [[WALL for _ in range(7)] for _ in range(7)]
