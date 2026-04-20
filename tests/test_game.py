@@ -259,6 +259,87 @@ class GameTests(unittest.TestCase):
 
         self.assertEqual(len(g.turn_logs), 10)
 
+    def test_show_inventory_displays_numbered_entries(self):
+        g = Game(seed=1)
+        g.inventory = [("Common", "Potion"), ("Rare", "Shield")]
+
+        g.show_inventory()
+
+        log_text = "\n".join(g.message_log)
+        self.assertIn("Inventory:", log_text)
+        self.assertIn("1: Common Potion", log_text)
+        self.assertIn("2: Rare Shield", log_text)
+
+    def test_u_with_number_uses_specific_inventory_slot(self):
+        g = Game(seed=1)
+        g.inventory = [("Common", "Potion"), ("Rare", "Shield")]
+        g.player.defense = 1
+        g.enemies = []
+
+        g.take_turn("u 2")
+
+        self.assertEqual(g.player.defense, 5)
+        self.assertEqual(len(g.inventory), 1)
+        self.assertEqual(g.inventory[0], ("Common", "Potion"))
+
+    def test_u_prioritizes_stat_boost_over_recovery_and_accessory(self):
+        g = Game(seed=1)
+        g.inventory = [
+            ("Common", "Potion"),
+            ("Common", "Shield"),
+            ("Rare", "Lucky amulet"),
+        ]
+        g.player.hp = 1
+        g.player_max_hp = 10
+        g.equipped_accessory = None
+        g.enemies = []
+        base_defense = g.player.defense
+
+        g.take_turn("u")
+
+        self.assertEqual(g.player.defense, base_defense + 1)
+        self.assertNotIn(("Common", "Shield"), g.inventory)
+
+    def test_u_prioritizes_recovery_when_no_stat_boost_item(self):
+        g = Game(seed=1)
+        g.inventory = [
+            ("Common", "Potion"),
+            ("Rare", "Lucky amulet"),
+        ]
+        g.player.hp = 3
+        g.player_max_hp = 10
+        g.equipped_accessory = None
+        g.enemies = []
+
+        g.take_turn("u")
+
+        self.assertGreater(g.player.hp, 3)
+        self.assertNotIn(("Common", "Potion"), g.inventory)
+
+    def test_u_prioritizes_rarer_accessory_when_no_other_priority(self):
+        g = Game(seed=1)
+        g.inventory = [("Rare", "Lucky amulet")]
+        g.player.hp = g.player_max_hp
+        g.player_mp = g.player_max_mp
+        g.equipped_accessory = ("Common", "Kote")
+        g.enemies = []
+
+        g.take_turn("u")
+
+        self.assertEqual(g.equipped_accessory, ("Rare", "Lucky amulet"))
+        self.assertEqual(g.inventory, [("Common", "Kote")])
+
+    def test_u_without_priority_falls_back_to_number_selection(self):
+        g = Game(seed=1)
+        g.inventory = [("Common", "Throwing axe"), ("Common", "Bomb")]
+        g.enemies = []
+
+        with patch("builtins.input", return_value="2"):
+            g.take_turn("u")
+
+        self.assertEqual(g.inventory, [("Common", "Throwing axe"), ("Common", "Bomb")])
+        self.assertIn("Bomb had no effect", "\n".join(g.message_log))
+
     def test_vampires_fang_converts_hp_overflow_to_mp(self):
         g = Game(seed=1)
         g.player_max_hp = 20

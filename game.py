@@ -116,6 +116,13 @@ class Game:
         "Epic": 0.80,
         "Legendary": 1.00,
     }
+    RARITY_RANK = {
+        "Common": 0,
+        "Uncommon": 1,
+        "Rare": 2,
+        "Epic": 3,
+        "Legendary": 4,
+    }
     GUARDIAN_ARMOR_MULTIPLIER_BY_RARITY = {
         "Common": 1.15,
         "Uncommon": 1.25,
@@ -265,7 +272,7 @@ class Game:
     @staticmethod
     def help_lines() -> List[str]:
         return [
-            "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item,",
+            "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item (u 3=use slot 3),",
             "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
             "System Commands: h=help, l=turn log, p=status details",
@@ -852,9 +859,9 @@ class Game:
         if len(self.inventory) == 1:
             return 0
 
-        self.log("Choose item to use:")
+        print("Choose item to use:")
         for idx, (rarity, kind) in enumerate(self.inventory, start=1):
-            self.log(f"{idx}: {rarity} {kind}")
+            print(f"{idx}: {rarity} {kind}")
         choice = input("Use which item [number, other=cancel]: ").strip()
         if not choice.isdigit():
             self.log("Item use cancelled.")
@@ -864,6 +871,29 @@ class Game:
             self.log("Invalid item choice.")
             return None
         return item_index
+
+    def find_prioritized_item_index(self) -> Optional[int]:
+        for idx, (_, kind) in enumerate(self.inventory):
+            if kind in {"Power", "Shield"}:
+                return idx
+
+        recovery_kinds = []
+        if self.player.hp < self.player_max_hp:
+            recovery_kinds.append("Potion")
+        if self.player_mp < self.player_max_mp:
+            recovery_kinds.append("Ether")
+        for idx, (_, kind) in enumerate(self.inventory):
+            if kind in recovery_kinds:
+                return idx
+
+        equipped_rank = -1
+        if self.equipped_accessory:
+            equipped_rank = self.RARITY_RANK.get(self.equipped_accessory[0], -1)
+        for idx, (rarity, kind) in enumerate(self.inventory):
+            if kind in self.ACCESSORY_KINDS and self.RARITY_RANK.get(rarity, -1) > equipped_rank:
+                return idx
+
+        return None
 
     def choose_direction(self, prompt: str) -> Optional[Tuple[int, int, str]]:
         direction_map = {
@@ -904,14 +934,22 @@ class Game:
             self.maybe_grant_floor_clear_bonus()
         return dmg
 
-    def use_item(self) -> None:
+    def use_item(self, selected_index: Optional[int] = None, auto_select: bool = False) -> bool:
         if not self.inventory:
             self.log("Inventory is empty.")
-            return
+            return False
 
-        selected_index = self.choose_inventory_index()
+        if selected_index is None and auto_select:
+            prioritized_index = self.find_prioritized_item_index()
+            if prioritized_index is not None:
+                selected_index = prioritized_index
         if selected_index is None:
-            return
+            selected_index = self.choose_inventory_index()
+            if selected_index is None:
+                return False
+        elif not (0 <= selected_index < len(self.inventory)):
+            self.log("Invalid item choice.")
+            return False
 
         rarity, kind = self.inventory[selected_index]
         consumed = True
@@ -996,6 +1034,7 @@ class Game:
                     self.log("Frugal soul failed to preserve the item.")
             if consumed:
                 self.inventory.pop(selected_index)
+        return used_successfully
 
     def gain_xp(self, amount: int) -> None:
         gained = amount
@@ -1696,7 +1735,9 @@ class Game:
         if not self.inventory:
             self.log("Inventory: (empty)")
             return
-        self.log("Inventory: " + ", ".join(f"{rarity} {kind}" for rarity, kind in self.inventory))
+        self.log("Inventory:")
+        for idx, (rarity, kind) in enumerate(self.inventory, start=1):
+            self.log(f"{idx}: {rarity} {kind}")
 
     def show_status_details(self) -> None:
         self.log("=== Status Details ===")
@@ -1735,8 +1776,16 @@ class Game:
 
     def take_turn(self, cmd: str) -> bool:
         acted = False
+        use_item_by_index = None
+        if cmd.startswith("u"):
+            parts = cmd.split()
+            if len(parts) == 2 and parts[0] == "u" and parts[1].isdigit():
+                use_item_by_index = int(parts[1]) - 1
+            elif cmd != "u":
+                self.log("Invalid command.")
+                return True
         move_input = bool(cmd) and all(ch in {"w", "a", "s", "d"} for ch in cmd)
-        if move_input or cmd in {".", "t", "u"}:
+        if move_input or cmd in {".", "t", "u"} or use_item_by_index is not None:
             self.start_turn_capture()
         if move_input:
             self.reset_guardian_armor_defense()
@@ -1749,9 +1798,8 @@ class Game:
             acted = self.use_technique()
         elif cmd == "i":
             self.show_inventory()
-        elif cmd == "u":
-            self.use_item()
-            acted = True
+        elif cmd == "u" or use_item_by_index is not None:
+            acted = self.use_item(use_item_by_index, auto_select=(cmd == "u"))
         elif cmd == "k":
             self.open_skill_menu()
         elif cmd == "h":
@@ -1851,7 +1899,7 @@ def main() -> None:
         if game.player.hp <= 0:
             show_game_over_screen(game)
             break
-        cmd = input("Command [w/a/s/d chain, t, ., i, u, k, h, l, p]: ").strip().lower()
+        cmd = input("Command [w/a/s/d chain, t, ., i, u, u <n>, k, h, l, p]: ").strip().lower()
         if not cmd:
             continue
         game.take_turn(cmd)
