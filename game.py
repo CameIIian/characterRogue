@@ -1,6 +1,7 @@
 import random
 import signal
 import sys
+import math
 from collections import deque
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -230,6 +231,7 @@ class Game:
         self.gods_wrath_charge_count = 0
         self.gods_wrath_charge_multiplier = 1.0
         self.next_floor_destination: Optional[int] = None
+        self.active_floor_event: Optional[str] = None
         self.friendly_spawn_cycle_index = self.current_cycle()
         self.spawned_friendly_roles_in_cycle: set[str] = set()
         self.fortified_spawn_cycle_index = self.current_cycle()
@@ -285,7 +287,7 @@ class Game:
         return [
             "Move Commands: w/a/s/d=move, .=wait, i=inventory, u=use item (u 3=use slot 3),",
             "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
-            "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
+            "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane (or use kv/ks/kg/ka, k v etc.)",
             "System Commands: h=help, l=turn log, p=status details",
             "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, e=fortified, M=miniboss, B=boss, I=item, $=merchant/technician, %=friendly demon, ?=maze traveler, >=stairs",
         ]
@@ -371,6 +373,7 @@ class Game:
         self.apply_cycle_growth()
         self.boss_laser_targets = []
         self.boss_enraged = False
+        self.roll_floor_event()
         while True:
             self.board = [[WALL for _ in range(self.width)] for _ in range(self.height)]
             self.enemies = []
@@ -386,6 +389,8 @@ class Game:
 
         cycle = self.current_cycle()
         enemy_count = min(2 + self.floor + cycle, 12)
+        if self.active_floor_event == "trap":
+            enemy_count = max(enemy_count, int(math.ceil(enemy_count * 1.5)))
         enemy_hp = int((4 + (self.floor * 2) + (cycle * 4)) * self.enemy_power_multiplier)
         enemy_atk = int(
             (2 + (self.floor // 3) + (cycle * 2) + (self.floor // 2))
@@ -448,11 +453,28 @@ class Game:
         self.maybe_spawn_fortified_enemy(enemy_atk)
 
         item_count = min(1 + self.floor // 2, 4)
+        if self.active_floor_event == "trap":
+            item_count = max(item_count, int(math.ceil(item_count * 1.5)))
         self.floor_clear_bonus_granted = False
         for _ in range(item_count):
             ix, iy = self.random_empty_tile()
             self.items.append(ItemEntity(ix, iy, self.random_item_kind(), self.roll_item_rarity()))
         self.maybe_spawn_friendly()
+
+    def roll_floor_event(self) -> None:
+        self.active_floor_event = None
+        roll = self.rng.random()
+        if roll < 0.02:
+            self.active_floor_event = "lucky_day"
+            self.log("Random Event - Lucky Day! XP gained on this floor is doubled.")
+            return
+        if roll < 0.03:
+            self.active_floor_event = "full_moon_night"
+            self.log("Random Event - Full Moon Night! At turn start, HP/MP recover by 5%.")
+            return
+        if roll < 0.04:
+            self.active_floor_event = "trap"
+            self.log("Random Event - TRAP! Enemy and item counts are multiplied by 1.5x.")
 
     def random_floor_only(self, exclude: Optional[set] = None) -> Tuple[int, int]:
         exclude = exclude or set()
@@ -1165,11 +1187,26 @@ class Game:
             self.log(
                 f"Lucky amulet boosted XP gain: {amount} -> {gained} (x{multiplier:.2f})."
             )
+        if self.active_floor_event == "lucky_day":
+            boosted = max(1, gained * 2)
+            self.log(f"Lucky Day doubles XP gain: {gained} -> {boosted}.")
+            gained = boosted
         self.xp += gained
         self.log(f"You gained {gained} XP.")
         while self.xp >= self.next_level_xp:
             self.xp -= self.next_level_xp
             self.level_up()
+
+    def apply_turn_start_effects(self) -> None:
+        if self.active_floor_event != "full_moon_night":
+            return
+        hp_restore = max(1, int(math.ceil(self.player_max_hp * 0.05)))
+        mp_restore = 0
+        if self.player_max_mp > 0:
+            mp_restore = max(1, int(math.ceil(self.player_max_mp * 0.05)))
+        healed, _ = self.restore_hp(hp_restore)
+        restored, _ = self.restore_mp(mp_restore)
+        self.log(f"Full Moon Night restores {healed} HP and {restored} MP at turn start.")
 
     def _stat_growth(self, low: int, high: int) -> int:
         chance = min(0.35 + (self.level * 0.05), 0.95)
@@ -1928,6 +1965,7 @@ class Game:
 
     def take_turn(self, cmd: str) -> bool:
         acted = False
+        cmd = cmd.strip().lower()
         use_item_by_index = None
         if cmd.startswith("u"):
             parts = cmd.split()
@@ -1937,8 +1975,11 @@ class Game:
                 self.log("Invalid command.")
                 return True
         move_input = bool(cmd) and all(ch in {"w", "a", "s", "d"} for ch in cmd)
-        if move_input or cmd in {".", "t", "u"} or use_item_by_index is not None:
+        skill_shortcut = self.parse_skill_shortcut(cmd)
+        actionable_command = move_input or cmd in {".", "t", "u"} or use_item_by_index is not None
+        if actionable_command:
             self.start_turn_capture()
+            self.apply_turn_start_effects()
         if move_input:
             self.reset_guardian_armor_defense()
             acted = self.execute_move_command(cmd)
@@ -1954,6 +1995,8 @@ class Game:
             acted = self.use_item(use_item_by_index, auto_select=(cmd == "u"))
         elif cmd == "k":
             self.open_skill_menu()
+        elif skill_shortcut is not None:
+            self.use_skill_point(skill_shortcut)
         elif cmd == "h":
             for line in self.help_lines():
                 self.log(line)
@@ -1972,6 +2015,13 @@ class Game:
             self._is_capturing_turn_events = False
 
         return True
+
+    @staticmethod
+    def parse_skill_shortcut(cmd: str) -> Optional[str]:
+        compact = cmd.replace(" ", "")
+        if len(compact) == 2 and compact[0] == "k" and compact[1] in {"v", "s", "g", "a"}:
+            return compact[1]
+        return None
 
     def won(self) -> bool:
         return False
@@ -2063,7 +2113,7 @@ def main() -> None:
         if game.player.hp <= 0:
             show_game_over_screen(game)
             break
-        cmd = input("Command [w/a/s/d chain, t, ., i, u, u <n>, k, h, l, p]: ").strip().lower()
+        cmd = input("Command [w/a/s/d chain, t, ., i, u, u <n>, k, kv/ks/kg/ka, h, l, p]: ").strip().lower()
         if not cmd:
             continue
         game.take_turn(cmd)

@@ -175,6 +175,49 @@ class GameTests(unittest.TestCase):
         self.assertTrue(opened)
         self.assertEqual(g.skill_tree["vitality"], 1)
 
+    def test_skill_shortcut_ks_spends_strength_point(self):
+        g = Game(seed=1)
+        g.skill_points = 1
+        atk_before = g.player.atk
+
+        g.take_turn("k s")
+
+        self.assertEqual(g.skill_tree["strength"], 1)
+        self.assertEqual(g.player.atk, atk_before + 2)
+
+    def test_lucky_day_doubles_xp_gain(self):
+        g = Game(seed=1)
+        g.active_floor_event = "lucky_day"
+
+        g.gain_xp(5)
+
+        self.assertGreaterEqual(g.level, 2)
+        self.assertIn("Lucky Day doubles XP gain", "\n".join(g.message_log))
+
+    def test_full_moon_night_recovers_hp_mp_at_turn_start(self):
+        g = Game(seed=1)
+        g.active_floor_event = "full_moon_night"
+        g.player_max_hp = 20
+        g.player.hp = 10
+        g.player_max_mp = 20
+        g.player_mp = 5
+        g.enemies = []
+
+        g.take_turn(".")
+
+        self.assertEqual(g.player.hp, 11)
+        self.assertEqual(g.player_mp, 6)
+
+    def test_trap_event_scales_enemy_and_item_count(self):
+        g = Game(seed=1)
+        g.floor = 1
+        with patch.object(g.rng, "random", return_value=0.035):
+            g.generate_floor()
+
+        self.assertEqual(g.active_floor_event, "trap")
+        self.assertEqual(len(g.enemies), 5)
+        self.assertEqual(len(g.items), 2)
+
     def test_arcane_upgrade_learns_random_spell(self):
         g = Game(seed=1)
         g.skill_points = 1
