@@ -17,6 +17,12 @@ ITEM = "I"
 STAIRS = ">"
 FRIENDLY = "F"
 LASER_WARNING = ","
+FRIENDLY_SYMBOL_BY_ROLE = {
+    "merchant": "$",
+    "technician": "$",
+    "friendly demon": "%",
+    "maze traveler": "?",
+}
 
 
 @dataclass
@@ -281,7 +287,7 @@ class Game:
             "Battle Commands: moving into enemies attacks, t=magic, k=skill,",
             "Skill command: k, then choose v=vitality, s=strength, g=guard, a=arcane",
             "System Commands: h=help, l=turn log, p=status details",
-            "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, e=fortified, M=miniboss, B=boss, I=item, F=friendly, >=stairs",
+            "Icons: #=wall, .=floor, ,=boss laser warning, @=you, E=enemy, e=fortified, M=miniboss, B=boss, I=item, $=merchant/technician, %=friendly demon, ?=maze traveler, >=stairs",
         ]
 
     def log(self, msg: str) -> None:
@@ -473,7 +479,7 @@ class Game:
         for i in self.items:
             temp[i.y][i.x] = ITEM
         for f in self.friendlies:
-            temp[f.y][f.x] = FRIENDLY
+            temp[f.y][f.x] = FRIENDLY_SYMBOL_BY_ROLE.get(f.role, FRIENDLY)
         for e in self.enemies:
             if e.kind == "miniboss":
                 temp[e.y][e.x] = MINIBOSS
@@ -1243,6 +1249,10 @@ class Game:
 
         current_spell = self.spells[0]
         self.log(
+            f"Current Arcana: {current_spell.rarity} {current_spell.name} | "
+            f"New Arcana: {spell.rarity} {spell.name}"
+        )
+        self.log(
             "You can only hold 1 Arcana. Choose: "
             "1=Keep current, discard new / 2=Take new, remove current."
         )
@@ -1698,6 +1708,7 @@ class Game:
                 self.boss_turn(enemy)
                 continue
             if enemy.kind == "fortified":
+                self.move_fortified_away_from_player(enemy)
                 continue
             if abs(enemy.x - self.player.x) + abs(enemy.y - self.player.y) == 1:
                 dmg = self.damage(enemy.atk, self.player.defense)
@@ -1705,20 +1716,46 @@ class Game:
                 self.log(f"Enemy hits you for {dmg} damage.")
                 continue
 
-            dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
-            self.rng.shuffle(dirs)
-            for dx, dy in dirs:
-                nx, ny = enemy.x + dx, enemy.y + dy
-                if not (0 <= nx < self.width and 0 <= ny < self.height):
-                    continue
-                if self.board[ny][nx] == WALL:
-                    continue
-                if (nx, ny) == (self.player.x, self.player.y):
-                    continue
-                if self.get_enemy_at(nx, ny):
-                    continue
-                enemy.x, enemy.y = nx, ny
-                break
+            self.move_enemy_randomly(enemy)
+
+    def move_enemy_randomly(self, enemy: Entity) -> None:
+        dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        self.rng.shuffle(dirs)
+        for dx, dy in dirs:
+            nx, ny = enemy.x + dx, enemy.y + dy
+            if not (0 <= nx < self.width and 0 <= ny < self.height):
+                continue
+            if self.board[ny][nx] == WALL:
+                continue
+            if (nx, ny) == (self.player.x, self.player.y):
+                continue
+            if self.get_enemy_at(nx, ny):
+                continue
+            enemy.x, enemy.y = nx, ny
+            break
+
+    def move_fortified_away_from_player(self, enemy: Entity) -> None:
+        current_dist = abs(enemy.x - self.player.x) + abs(enemy.y - self.player.y)
+        best_tiles: List[Tuple[int, int]] = []
+        best_dist = current_dist
+        for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+            nx, ny = enemy.x + dx, enemy.y + dy
+            if not (0 <= nx < self.width and 0 <= ny < self.height):
+                continue
+            if self.board[ny][nx] == WALL:
+                continue
+            if (nx, ny) == (self.player.x, self.player.y):
+                continue
+            if self.get_enemy_at(nx, ny):
+                continue
+            dist = abs(nx - self.player.x) + abs(ny - self.player.y)
+            if dist > best_dist:
+                best_dist = dist
+                best_tiles = [(nx, ny)]
+            elif dist == best_dist and dist > current_dist:
+                best_tiles.append((nx, ny))
+        if best_tiles:
+            enemy.x, enemy.y = self.rng.choice(best_tiles)
 
     def boss_turn(self, boss: Entity) -> None:
         if boss.hp < 15 and not self.boss_enraged:
