@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from game import BOSS, FLOOR, FORTIFIED_ENEMY, FRIENDLY, MINIBOSS, WALL, Entity, FriendlyEntity, Game, Spell, show_title_screen
+from game import BOSS, FLOOR, FORTIFIED_ENEMY, MINIBOSS, WALL, Entity, FriendlyEntity, Game, Spell, show_title_screen
 
 
 class GameTests(unittest.TestCase):
@@ -196,6 +196,7 @@ class GameTests(unittest.TestCase):
         self.assertTrue(upgraded)
         self.assertEqual(len(g.spells), 1)
         self.assertEqual(g.spells[0].name, "Flare Curtain")
+        self.assertIn("Current Arcana: Rare Flare Curtain | New Arcana: Common Comet Missile", "\n".join(g.message_log))
 
     def test_arcane_upgrade_can_replace_existing_with_new(self):
         g = Game(seed=1)
@@ -259,7 +260,30 @@ class GameTests(unittest.TestCase):
 
         rendered = g.render()
 
-        self.assertIn(FRIENDLY, rendered)
+        self.assertIn("$", rendered)
+
+    def test_render_shows_role_specific_friendly_icons(self):
+        g = Game(seed=1, width=7, height=7)
+        g.board = [[WALL for _ in range(7)] for _ in range(7)]
+        for y in range(1, 6):
+            for x in range(1, 6):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 1, 1
+        g.stairs = (5, 1)
+        g.items = []
+        g.enemies = []
+        g.friendlies = [
+            FriendlyEntity(2, 2, role="merchant"),
+            FriendlyEntity(3, 2, role="technician"),
+            FriendlyEntity(4, 2, role="friendly demon"),
+            FriendlyEntity(5, 2, role="maze traveler"),
+        ]
+
+        rendered = g.render()
+
+        self.assertIn("$", rendered)
+        self.assertIn("%", rendered)
+        self.assertIn("?", rendered)
 
     def test_generate_floor_spawns_at_most_one_friendly(self):
         g = Game(seed=1)
@@ -278,6 +302,22 @@ class GameTests(unittest.TestCase):
         g.enemy_turn()
 
         self.assertEqual(g.player.hp, 10)
+
+    def test_fortified_enemy_moves_away_from_player(self):
+        g = Game(seed=1)
+        g.board = [[WALL for _ in range(5)] for _ in range(5)]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                g.board[y][x] = FLOOR
+        g.player.x, g.player.y = 2, 2
+        fortified = Entity(2, 1, hp=20, atk=999, defense=99, kind="fortified")
+        g.enemies = [fortified]
+        before_distance = abs(fortified.x - g.player.x) + abs(fortified.y - g.player.y)
+
+        g.enemy_turn()
+
+        after_distance = abs(fortified.x - g.player.x) + abs(fortified.y - g.player.y)
+        self.assertGreater(after_distance, before_distance)
 
     def test_boss_laser_marks_only_cardinal_lines(self):
         g = Game(seed=1, width=7, height=7)
